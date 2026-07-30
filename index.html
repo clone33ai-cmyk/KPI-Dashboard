@@ -171,6 +171,34 @@ const SOURCES = {
       { id: "phone", label: "Customer (phone)", required: false, match: ["customer", "phone"] },
     ],
   },
+  estimates: {
+    label: "Housecall Pro — Estimates export",
+    tip: "Export estimates (all statuses). Feeds the Open Estimates pipeline on the Overview: pending count, dollar value, and aging. Needs created date; status, amount, phone, and estimate # improve it.",
+    fields: [
+      { id: "date", label: "Created date", required: true, match: ["created date", "estimate created date", "created", "creation", "date"] },
+      { id: "outcome", label: "Outcome (open/won/lost)", required: false, match: ["outcome"] },
+      { id: "status", label: "Estimate status", required: false, match: ["estimate status", "status"] },
+      { id: "amount", label: "Open value", required: false, match: ["open value", "estimate total", "estimate amount", "total", "amount"] },
+      { id: "name", label: "Customer name", required: false, match: ["customer name", "customer", "name"] },
+      { id: "phone", label: "Customer phone (if present)", required: false, match: ["customer mobile number", "mobile", "customer phone", "phone"] },
+      { id: "eid", label: "Estimate number", required: false, match: ["estimate #", "estimate number", "estimate id"] },
+      { id: "desc", label: "Description", required: false, match: ["description"] },
+      { id: "addr", label: "Address", required: false, match: ["address"] },
+      { id: "notes", label: "Notes", required: false, match: ["notes"] },
+    ],
+  },
+  kathy: {
+    label: "Spam Kathy — Call transcripts export",
+    tip: "Retell export with transcripts. Feeds the Spam Kathy audit tab: correct transfers, missed real callers, failed transfers, spam blocked and passed.",
+    fields: [
+      { id: "date", label: "Time", required: true, match: ["time", "date"] },
+      { id: "disc", label: "Disconnection Reason", required: true, match: ["disconnection reason", "disconnection"] },
+      { id: "transcript", label: "Transcript", required: true, match: ["transcript", "transcription"] },
+      { id: "from", label: "From (caller)", required: false, match: ["from", "caller"] },
+      { id: "duration", label: "Call Duration", required: false, match: ["call duration", "duration"] },
+      { id: "cid", label: "Call ID", required: false, match: ["call id"] },
+    ],
+  },
   lsabill: {
     label: "Google LSA — Billing export (optional, all accounts)",
     tip: "Export billing / transactions from each LSA account and drop all files here (file names don't matter). When billing data covers a month, it replaces the typed monthly spend for that month. Needs a date and a dollar amount column.",
@@ -231,6 +259,25 @@ const normPhone = (v) => {
 
 /* local calendar date: never use toISOString here — it converts to UTC and
    shifts midnight-local dates to the previous day in UTC+ timezones */
+function computeKathy(rows, [a, b]) {
+  const inR = (rows || []).filter((r) => { const t = new Date(r.d + "T12:00:00"); return t >= a && t <= b; });
+  const out = { screened: inR.length, real: 0, realTransferred: 0, realFailed: 0, realMissed: 0, spamBlocked: 0, spamPassed: 0, unknown: 0, missedList: [], failedList: [], passedList: [] };
+  inR.forEach((r) => {
+    if (r.intent === "real") {
+      out.real++;
+      if (r.transferred) out.realTransferred++;
+      else if (r.attempted) { out.realFailed++; out.failedList.push(r); }
+      else { out.realMissed++; out.missedList.push(r); }
+    } else if (r.intent === "spam") {
+      if (r.transferred || r.attempted) { out.spamPassed++; out.passedList.push(r); }
+      else out.spamBlocked++;
+    } else out.unknown++;
+  });
+  out.accuracy = out.real ? (out.realTransferred / out.real) * 100 : null;
+  out.spamCatch = (out.spamBlocked + out.spamPassed) ? (out.spamBlocked / (out.spamBlocked + out.spamPassed)) * 100 : null;
+  return out;
+}
+
 const fmtPhone = (p) => (p && p.length === 10 ? `(${p.slice(0, 3)}) ${p.slice(3, 6)}-${p.slice(6)}` : p || "no caller ID");
 
 const dkey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -345,6 +392,59 @@ function normalizeRow(type, raw, map) {
     const ch = lc(get("charged"));
     base.charged = ch === "" ? true : /charg|yes|true|billable/.test(ch) && !/not|un|refund|credit/.test(ch);
     base.ph = normPhone(get("phone"));
+  }
+  if (type === "kathy") {
+    const tx = String(get("transcript") || "");
+    const disc = lc(get("disc"));
+    /* caller intent, judged ONLY from what the caller (User) said */
+    const userText = tx.split(/Agent:/).map((seg) => {
+      const u = seg.split(/User:/).slice(1).join(" ");
+      return u;
+    }).join(" ").toLowerCase() || tx.split(/User:/).slice(1).join(" ").toLowerCase();
+    /* Real-customer language checked FIRST and wins ties. Discovery phrases
+       ("found your website") are customer language; selling intent
+       ("selling websites", "want a new website") is what marks spam. */
+    const REAL = /pool|leak|repair|quote|estimate|plaster|remodel|tile|deck|pump|filter|heater|spa\b|equipment|service|appointment|schedul|returning|call.?back|spoke|talked|technician|invoice|found (you|your)|saw your|came across your|referred|neighbor|friend (told|said)/;
+    const SPAM = /\bsell|selling|new website|build(ing)? ?websites?|web ?design|redo your|i make websites|do you (guys )?(have|want|need) (a |one )?(website|site)|websites?[\s\S]{0,50}?(you want|you'?d like|like one|want one|interested)|(starting|making|installing|going|doing|offering) websites?|seo\b|google (listing|business)|business listing|\blisting\b|marketing|advertis|promot|\bloan\b|funding|insurance|solar|call list|remove me|do you want one|survey|special offer/;
+    let intent = "unknown";
+    if (REAL.test(userText)) intent = "real";
+    else if (SPAM.test(userText)) intent = "spam";
+    /* what Kathy did */
+    const attempted = disc === "call_transfer" || /forward you to our dispatch|over to our dispatch|transfer you|connect you (to|with)/i.test(tx);
+    const transferred = disc === "call_transfer";
+    base.disc = disc;
+    base.intent = intent;
+    base.attempted = attempted;
+    base.transferred = transferred;
+    base.ph = normPhone(get("from"));
+    const durS = String(get("duration") || "");
+    const dm = durS.match(/^(\d+):(\d{2})$/);
+    base.dur = dm ? Number(dm[1]) * 60 + Number(dm[2]) : parseNum(durS) || 0;
+    base.tx = tx.length > 2000 ? tx.slice(0, 2000) + "…" : tx;
+    const cid = String(get("cid") || "").trim();
+    if (cid) base.cid = cid;
+  }
+  if (type === "estimates") {
+    const outcome = lc(get("outcome"));
+    const st = lc(get("status"));
+    if (outcome) {
+      /* HCP Outcome column is the decision of record: open / won / lost */
+      base.closed = outcome !== "open";
+    } else {
+      /* no Outcome column: pending language wins; else a decision word closes */
+      const pending = /pending|submit|sent|await|open|draft|review/.test(st);
+      base.closed = !pending && /approv|won|convert|copied|decline|lost|expire|dismiss|cancel|closed|invoiced|scheduled/.test(st);
+    }
+    base.st = String(get("status") || "").trim() || outcome;
+    base.amt = parseNum(get("amount")) || 0;
+    base.nm = String(get("name") || "").trim();
+    base.ph = normPhone(get("phone"));
+    const clip = (v, n) => { const s = String(v || "").trim(); return s.length > n ? s.slice(0, n) + "…" : s; };
+    base.desc = clip(get("desc"), 200);
+    base.addr = clip(get("addr"), 120);
+    base.notes = clip(get("notes"), 400);
+    const eid = String(get("eid") || "").replace(/\D/g, "");
+    if (eid) base.eid = eid;
   }
   if (type === "lsabill") {
     const amt = parseNum(get("amount"));
@@ -656,7 +756,7 @@ const fmtVal = (m, v) => {
 /* ================================================================ */
 
 function App() {
-  const [data, setData] = useState({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], manual: {}, numFilter: {}, numMeta: {}, mapMemory: {} });
+  const [data, setData] = useState({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], manual: {}, numFilter: {}, numMeta: {}, mapMemory: {} });
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("overview");
   const [preset, setPreset] = useState("mtd");
@@ -679,7 +779,7 @@ function App() {
     empty: { label: "No data", color: C.gray },
     manual: { label: "Manual", color: C.gray },
   };
-  const fileRefs = { calls: useRef(), jobs: useRef(), ads: useRef(), lsa: useRef(), lsabill: useRef() };
+  const fileRefs = { calls: useRef(), jobs: useRef(), ads: useRef(), lsa: useRef(), lsabill: useRef(), estimates: useRef(), kathy: useRef() };
   const backupRef = useRef();
 
   useEffect(() => {
@@ -689,14 +789,14 @@ function App() {
         const r = await store.get(STORAGE_KEY);
         if (r && r.value) {
           const parsed = JSON.parse(r.value);
-          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
+          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
           fromStore = true;
         }
       } catch (e) { /* nothing stored */ }
       /* embedded default dataset: used whenever nothing is saved in this
          browser (e.g. Google Sites). Saved data always wins over it. */
       if (!fromStore && typeof window !== "undefined" && window.MPLR_DEFAULT_DATA) {
-        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...window.MPLR_DEFAULT_DATA });
+        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...window.MPLR_DEFAULT_DATA });
       }
       setLoaded(true);
     })();
@@ -817,6 +917,28 @@ function App() {
     });
   }, [cur, prev, manualFor]);
 
+  /* open estimates: pending right now, converted-by-phone treated as closed */
+  const openEstimates = useMemo(() => {
+    const est = data.estimates || [];
+    if (!est.length) return null;
+    const phoneIdx = dataIdx._phoneIdx || {};
+    const today = Date.now();
+    const allOpen = est.filter((e) => {
+      if (e.closed) return false;
+      if (e.ph && (phoneIdx[e.ph] || []).some((jd) => jd >= e.d)) return false; // job created after → converted
+      return true;
+    }).map((e) => ({ ...e, age: Math.floor((today - new Date(e.d + "T12:00:00").getTime()) / 86400000) }));
+    /* over 90 days without a decision is not pipeline, it's archaeology */
+    const open = allOpen.filter((e) => e.age <= 90);
+    const dead = allOpen.length - open.length;
+    const totalVal = open.reduce((a, e) => a + (e.amt || 0), 0);
+    const buckets = { fresh: 0, warm: 0, stale: 0 };
+    open.forEach((e) => { if (e.age <= 7) buckets.fresh++; else if (e.age <= 30) buckets.warm++; else buckets.stale++; });
+    const phMissing = est.length > 0 && est.every((e) => !e.ph);
+    const amtMissing = est.length > 0 && est.every((e) => !e.amt);
+    return { open: open.sort((a, b) => b.age - a.age), totalVal, buckets, total: est.length, dead, phMissing, amtMissing };
+  }, [data.estimates, dataIdx]);
+
   /* ---------- insights & recommendations (computed from the data) ---------- */
   const insights = useMemo(() => {
     const v = cur.values, pv = prev.values, out = [];
@@ -884,9 +1006,32 @@ function App() {
       `${money(nm.revenue)} came from customers with no call on file (text, form, email bookings).`,
       "Have the office set the lead source field in HCP at booking for non-call jobs.");
 
+    if (openEstimates && openEstimates.open.length) {
+      const oe = openEstimates;
+      push(oe.buckets.stale > 5 ? "red" : "yellow",
+        `${oe.open.length} live estimates worth ${money(oe.totalVal)} awaiting a decision`,
+        `${oe.buckets.stale} are 31-90 days old. Estimates don't close themselves.`,
+        "Follow up oldest-first: the pipeline panel below has the list.");
+    }
+
+    if (kathyCur.screened > 0) {
+      if (kathyCur.realMissed > 0) push("red",
+        `Spam Kathy dismissed ${kathyCur.realMissed} real caller${kathyCur.realMissed === 1 ? "" : "s"} without transferring`,
+        `Real customers were screened out. The Spam Kathy tab lists each one with the transcript.`,
+        "Review the missed transcripts and tighten the agent prompt.");
+      if (kathyCur.realFailed > 0) push("yellow",
+        `${kathyCur.realFailed} transfer${kathyCur.realFailed === 1 ? "" : "s"} of real callers failed technically`,
+        `Kathy tried to hand them off and the transfer didn't complete. That's a telephony problem, not a screening problem.`,
+        "Check the Retell transfer destination and SIP setup.");
+      if (kathyCur.spamPassed > 2) push("yellow",
+        `Kathy offered to transfer ${kathyCur.spamPassed} spam callers`,
+        `Sellers and robocalls are getting the dispatch handoff line.`,
+        "The Spam Kathy tab shows which pitches fooled her; feed those into the prompt.");
+    }
+
     const order = { red: 0, yellow: 1, green: 2 };
     return out.sort((a, b) => order[a.sev] - order[b.sev]).slice(0, 7);
-  }, [cur, prev]);
+  }, [cur, prev, openEstimates, kathyCur]);
 
   /* ---------- compare tab ---------- */
   const [comparePreset, setComparePreset] = useState("m");
@@ -920,6 +1065,20 @@ function App() {
   const cmpA = useMemo(() => (compareRanges.a ? computeStats(dataIdx, compareRanges.a, data.numFilter, data.manual) : null), [dataIdx, compareRanges, data.numFilter, data.manual]);
   const cmpB = useMemo(() => (compareRanges.b ? computeStats(dataIdx, compareRanges.b, data.numFilter, data.manual) : null), [dataIdx, compareRanges, data.numFilter, data.manual]);
 
+  const kathyCur = useMemo(() => computeKathy(data.kathy, range), [data.kathy, range]);
+  const kathyPrev = useMemo(() => computeKathy(data.kathy, prevRange), [data.kathy, prevRange]);
+  const [openKathyRow, setOpenKathyRow] = useState(null);
+  const [kathyFilter, setKathyFilter] = useState("all");
+  const [kathySearch, setKathySearch] = useState("");
+  const [showAllKathy, setShowAllKathy] = useState(false);
+
+  /* drill-down state for the Overview lists */
+  const [openEstRow, setOpenEstRow] = useState(null);
+  const [estAgeFilter, setEstAgeFilter] = useState("all");
+  const [showAllEst, setShowAllEst] = useState(false);
+  const [openCallRow, setOpenCallRow] = useState(null);
+  const [showAllCalls, setShowAllCalls] = useState(false);
+
   const health = useMemo(() => {
     const graded = scored.filter((s) => ["green", "yellow", "red"].includes(s.status));
     if (!graded.length) return { pct: 0, g: 0, y: 0, r: 0, total: 0 };
@@ -943,6 +1102,46 @@ function App() {
   const applyImport = (working, type, rows, map) => {
     let normalized = rows.map((r) => normalizeRow(type, r, map)).filter(Boolean);
     if (type === "ads" && normalized.some((r) => r.kind === "ta")) normalized = normalized.filter((r) => r.kind === "ta");
+
+    if (type === "kathy") {
+      const kept = [...(working.kathy || [])];
+      const byId = {};
+      kept.forEach((r, i) => { if (r.cid) byId[r.cid] = i; });
+      const seenNoId = new Set(kept.filter((r) => !r.cid).map((r) => JSON.stringify(r)));
+      let addedCount = 0, dupes = 0;
+      normalized.forEach((r) => {
+        if (r.cid) {
+          if (byId[r.cid] !== undefined) dupes++;
+          else { byId[r.cid] = kept.length; kept.push(r); addedCount++; }
+        } else {
+          const k = JSON.stringify(r);
+          if (seenNoId.has(k)) dupes++; else { seenNoId.add(k); kept.push(r); addedCount++; }
+        }
+      });
+      working.kathy = kept.sort((a, b) => (a.d < b.d ? -1 : 1));
+      return { added: addedCount, dupes, updated: 0 };
+    }
+
+    if (type === "estimates") {
+      const kept = [...(working.estimates || [])];
+      const byId = {};
+      kept.forEach((r, i) => { if (r.eid) byId[r.eid] = i; });
+      const seenNoId = new Set(kept.filter((r) => !r.eid).map((r) => JSON.stringify(r)));
+      let addedCount = 0, dupes = 0, updated = 0;
+      normalized.forEach((r) => {
+        if (r.eid) {
+          if (byId[r.eid] !== undefined) {
+            const i = byId[r.eid];
+            if (JSON.stringify(kept[i]) !== JSON.stringify(r)) { kept[i] = r; updated++; } else dupes++;
+          } else { byId[r.eid] = kept.length; kept.push(r); addedCount++; }
+        } else {
+          const k = JSON.stringify(r);
+          if (seenNoId.has(k)) { dupes++; } else { seenNoId.add(k); kept.push(r); addedCount++; }
+        }
+      });
+      working.estimates = kept.sort((a, b) => (a.d < b.d ? -1 : 1));
+      return { added: addedCount, dupes, updated };
+    }
 
     if (type === "jobs") {
       /* merge by Job #: a re-uploaded job (e.g. scheduled → completed) replaces
@@ -1004,7 +1203,11 @@ function App() {
         map = {}; const used = new Set();
         SOURCES[type].fields.forEach((f) => { const hit = matchHeader(table.headers, used, f.match); if (hit) { map[f.id] = hit; used.add(hit); } });
       }
-      const missing = SOURCES[type].fields.filter((f) => f.required && !map[f.id]);
+      let missing = SOURCES[type].fields.filter((f) => f.required && !map[f.id]);
+      /* estimates need a dollar column and a decision column to be useful */
+      if (type === "estimates" && (!map.amount || (!map.outcome && !map.status))) {
+        missing = missing.concat(SOURCES.estimates.fields.filter((f) => (f.id === "amount" || f.id === "outcome") && !map[f.id]));
+      }
       if (missing.length) { needsMapping.push({ type, headers: table.headers, rows: table.rows, map, fileName: file.name }); continue; }
       const res = applyImport(working, type, table.rows, map);
       working.mapMemory[mapKey(type, table.headers)] = map;
@@ -1050,7 +1253,7 @@ function App() {
     reader.onload = (e) => {
       try {
         const parsed = JSON.parse(e.target.result);
-        const next = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed };
+        const next = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed };
         persist(next);
         setUploadMsg({ ok: true, text: "Backup restored." });
       } catch (err) { setUploadMsg({ ok: false, text: "That doesn't look like a dashboard backup file." }); }
@@ -1194,7 +1397,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 22</div>
+            <div className="sub">KPI Dashboard · build 28</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1228,7 +1431,7 @@ function App() {
         </div>
 
         <nav className="tabs" aria-label="Views">
-          {[["overview", "Overview"], ["scorecard", "Scorecard"], ["compare", "Compare"], ["trends", "Trends"], ["upload", "Data"]].map(([id, label]) => (
+          {[["overview", "Overview"], ["scorecard", "Scorecard"], ["compare", "Compare"], ["kathy", "Spam Kathy"], ["trends", "Trends"], ["upload", "Data"]].map(([id, label]) => (
             <button key={id} className={"tab" + (tab === id ? " on" : "")} onClick={() => setTab(id)}>{label}</button>
           ))}
         </nav>
@@ -1275,14 +1478,41 @@ function App() {
                 <div className="panel" style={{ marginTop: 20 }}>
                   <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Callback list: never reached you</h2><small>{cur.missedOps.length} lost callers, newest first</small></div>
                   <p className="note" style={{ marginBottom: 8 }}>One row per caller. Missed in this range, never got answered on any later call, never became a job. Callers who tried again and got through are excluded.</p>
-                  {cur.missedOps.slice(0, 15).map((m, i) => (
-                    <div className="srcrow" key={i}>
-                      <span style={{ fontWeight: 600, minWidth: 140 }}>{fmtPhone(m.ph)}</span>
-                      <span className="note">{m.d}</span>
-                      <span className="note" style={{ marginLeft: "auto" }}>{m.src}</span>
-                    </div>
-                  ))}
-                  {cur.missedOps.length > 15 && <p className="note" style={{ marginTop: 8 }}>…and {cur.missedOps.length - 15} more. Narrow the date range to work them in batches.</p>}
+                  {(showAllCalls ? cur.missedOps : cur.missedOps.slice(0, 15)).map((m, i) => {
+                    const isOpen = openCallRow === m.ph;
+                    const attempts = isOpen
+                      ? data.calls.filter((c) => c.ph === m.ph && (!c.tn || data.numFilter[c.tn] !== false) && !c.spamTag).sort((a, b) => (a.d < b.d ? 1 : -1))
+                      : [];
+                    return (
+                      <div key={m.ph + i} style={{ borderBottom: `1px solid ${C.line}` }}>
+                        <div className="srcrow" style={{ cursor: "pointer", borderBottom: "none" }} onClick={() => setOpenCallRow(isOpen ? null : m.ph)}>
+                          <span style={{ fontWeight: 600, minWidth: 140 }}>{fmtPhone(m.ph)}</span>
+                          <span className="note">{m.d}</span>
+                          <span className="note" style={{ marginLeft: "auto" }}>{m.src}</span>
+                          <span className="note" style={{ width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
+                        </div>
+                        {isOpen && (
+                          <div style={{ padding: "2px 6px 12px", fontSize: 13.5 }}>
+                            <a href={"tel:" + m.ph} className="btn" style={{ display: "inline-block", padding: "7px 16px", textDecoration: "none", marginBottom: 8 }}>Call {fmtPhone(m.ph)}</a>
+                            <div className="note" style={{ marginBottom: 4 }}>{attempts.length} call{attempts.length === 1 ? "" : "s"} from this number on record:</div>
+                            {attempts.map((c, j) => (
+                              <div key={j} style={{ display: "flex", gap: 10, flexWrap: "wrap", padding: "3px 0", color: C.ink }}>
+                                <span style={{ minWidth: 86 }}>{c.d}</span>
+                                <span style={{ fontWeight: 600, color: c.answered ? C.green : C.red }}>{c.answered ? "Answered" : "Missed"}</span>
+                                <span className="note">{c.src}</span>
+                                <span className="note" style={{ marginLeft: "auto" }}>{(data.numMeta[c.tn] || {}).nn || ""}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {cur.missedOps.length > 15 && (
+                    <p className="note" style={{ marginTop: 8, cursor: "pointer", color: C.goldSoft, fontWeight: 600 }} onClick={() => setShowAllCalls(!showAllCalls)}>
+                      {showAllCalls ? "Show fewer" : `Show all ${cur.missedOps.length} lost callers`}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -1339,6 +1569,76 @@ function App() {
                   </div>
                 );
               })()}
+              {openEstimates && (
+                <div className="panel" style={{ marginTop: 20 }}>
+                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Open estimates pipeline</h2><small>right-now snapshot from the estimates upload, not filtered by date range</small></div>
+                  {openEstimates.open.length === 0 ? (
+                    <p className="note">All {openEstimates.total.toLocaleString()} estimates on file are closed or converted. Clean pipeline.</p>
+                  ) : (
+                    <>
+                      <div className="val" style={{ fontSize: 38, margin: "8px 0 2px" }}>
+                        {openEstimates.open.length}<span style={{ fontSize: 20, color: C.dim }}> open · ${Math.round(openEstimates.totalVal).toLocaleString()}</span>
+                      </div>
+                      <p className="note" style={{ marginBottom: 10 }}>estimates from the last 90 days still waiting on a yes or no</p>
+                      {openEstimates.amtMissing && (
+                        <div className="card" style={{ borderLeftColor: C.red, marginBottom: 10 }}>
+                          <div className="mname">Estimates upload is missing the Open value column</div>
+                          <div className="note" style={{ marginTop: 4 }}>Pipeline dollars read $0 without it. Re-upload the estimates export and point the mapper at Open value.</div>
+                        </div>
+                      )}
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+                        {[["all", `all ${openEstimates.open.length}`, C.gray], ["fresh", `${openEstimates.buckets.fresh} under a week`, C.green], ["warm", `${openEstimates.buckets.warm} 8–30 days`, C.yellow], ["stale", `${openEstimates.buckets.stale} over 30 days`, C.red]].map(([id, label, color]) => (
+                          <span key={id} className="pill" onClick={() => setEstAgeFilter(id)} style={{ background: color, cursor: "pointer", outline: estAgeFilter === id ? `2px solid ${C.gold}` : "none", outlineOffset: 2 }}>{label}</span>
+                        ))}
+                      </div>
+                      {(() => {
+                        const filtered = openEstimates.open.filter((e) => estAgeFilter === "all" ? true : estAgeFilter === "fresh" ? e.age <= 7 : estAgeFilter === "warm" ? e.age > 7 && e.age <= 30 : e.age > 30);
+                        const shown = showAllEst ? filtered : filtered.slice(0, 10);
+                        return (
+                          <>
+                            {shown.map((e, i) => {
+                              const key = e.eid || `${e.d}-${i}`;
+                              const isOpen = openEstRow === key;
+                              return (
+                                <div key={key} style={{ borderBottom: `1px solid ${C.line}` }}>
+                                  <div className="srcrow" style={{ cursor: "pointer", borderBottom: "none" }} onClick={() => setOpenEstRow(isOpen ? null : key)}>
+                                    <span style={{ fontWeight: 600, minWidth: 140 }}>{e.nm || fmtPhone(e.ph)}</span>
+                                    <span className="note">{e.d}{e.st ? ` · ${e.st}` : ""}</span>
+                                    <span className="note">{e.amt ? `$${Math.round(e.amt).toLocaleString()}` : ""}</span>
+                                    <span style={{ marginLeft: "auto", fontWeight: 600, color: e.age > 30 ? C.red : e.age > 7 ? C.yellow : C.green }}>{e.age}d old</span>
+                                    <span className="note" style={{ width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
+                                  </div>
+                                  {isOpen && (
+                                    <div style={{ padding: "2px 6px 12px", fontSize: 13.5, display: "grid", gap: 5 }}>
+                                      {e.eid && <div><span className="note">Estimate #</span> <b>{e.eid}</b>{e.amt ? <> · <b>${Math.round(e.amt).toLocaleString()}</b> open value</> : null}</div>}
+                                      {e.desc && <div><span className="note">Work:</span> {e.desc}</div>}
+                                      {e.addr && <div><span className="note">Address:</span> {e.addr}</div>}
+                                      {e.notes && <div><span className="note">Notes:</span> {e.notes}</div>}
+                                      {e.ph && <a href={"tel:" + e.ph} className="btn" style={{ display: "inline-block", padding: "7px 16px", textDecoration: "none", marginTop: 4 }}>Call {fmtPhone(e.ph)}</a>}
+                                      {!e.desc && !e.addr && !e.notes && <div className="note">No description, address, or notes captured yet: re-upload the estimates export once and these fill in (the columns are now read).</div>}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {filtered.length > 10 && (
+                              <p className="note" style={{ marginTop: 8, cursor: "pointer", color: C.goldSoft, fontWeight: 600 }} onClick={() => setShowAllEst(!showAllEst)}>
+                                {showAllEst ? "Show fewer" : `Show all ${filtered.length}`}
+                              </p>
+                            )}
+                          </>
+                        );
+                      })()}
+                      {openEstimates.dead > 0 && (
+                        <p className="note" style={{ marginTop: 8 }}>
+                          {openEstimates.dead.toLocaleString()} older undecided estimates (90+ days) are excluded from the pipeline: at that age they're dead, not pending. Worth a bulk cleanup in HCP someday, but they shouldn't pollute this number.
+                        </p>
+                      )}
+                      <p className="note" style={{ marginTop: 8 }}>Open means the HCP Outcome column says open; won and lost are excluded. If the export carries phone numbers, a customer whose job was created after the estimate date is treated as converted too.</p>
+                    </>
+                  )}
+                </div>
+              )}
             </>
           )
         )}
@@ -1394,6 +1694,114 @@ function App() {
               </>
             )}
           </div>
+        )}
+
+        {/* ================= SPAM KATHY ================= */}
+        {tab === "kathy" && (
+          (data.kathy || []).length === 0 ? (
+            <div className="panel">
+              <p style={{ marginBottom: 12 }}>No transcripts yet. Upload the Retell transcript export on the Data tab (Spam Kathy card) and this becomes an audit of every screening decision she made.</p>
+              <button className="btn" onClick={() => setTab("upload")}>Go to Data</button>
+            </div>
+          ) : (
+            <>
+              <div className="sectionhead"><h2>Screening scorecard</h2><small>{kathyCur.screened} calls screened in this range · graded from transcripts</small></div>
+              <div className="grid">
+                {[
+                  { name: "Real callers transferred", v: kathyCur.real ? `${kathyCur.realTransferred}/${kathyCur.real}` : "—", pct: kathyCur.accuracy, status: kathyCur.accuracy == null ? "empty" : kathyCur.accuracy >= 95 ? "green" : kathyCur.accuracy >= 80 ? "yellow" : "red", note: kathyCur.accuracy != null ? `${kathyCur.accuracy.toFixed(0)}% of real callers reached dispatch${kathyPrev.accuracy != null ? ` · prior period ${kathyPrev.accuracy.toFixed(0)}%` : ""}` : "No real callers identified in range" },
+                  { name: "Real callers dismissed", v: kathyCur.realMissed, status: kathyCur.realMissed === 0 ? "green" : "red", note: kathyCur.realMissed === 0 ? "Nobody real was screened out" : "Should have transferred, hung up instead — list below" },
+                  { name: "Transfers failed (technical)", v: kathyCur.realFailed, status: kathyCur.realFailed === 0 ? "green" : "yellow", note: kathyCur.realFailed === 0 ? "Every attempted handoff connected" : "Kathy tried, the line didn't connect — telephony issue" },
+                  { name: "Spam blocked", v: kathyCur.spamBlocked, pct: kathyCur.spamCatch, status: kathyCur.spamCatch == null ? "empty" : kathyCur.spamCatch >= 90 ? "green" : kathyCur.spamCatch >= 70 ? "yellow" : "red", note: kathyCur.spamCatch != null ? `${kathyCur.spamCatch.toFixed(0)}% of identified spam dismissed` : "No spam identified in range" },
+                  { name: "Spam offered a transfer", v: kathyCur.spamPassed, status: kathyCur.spamPassed === 0 ? "green" : "yellow", note: kathyCur.spamPassed === 0 ? "No spam got the handoff line" : "Pitches that fooled her — list below" },
+                  { name: "Hung up during screening", v: kathyCur.unknown, status: "baseline", note: "Ended before stating a reason; mostly robocallers bailing at the question" },
+                ].map((c, i) => (
+                  <div className="card" key={i} style={{ borderLeftColor: STATUS_META[c.status].color }}>
+                    <div className="top">
+                      <div className="mname">{c.name}</div>
+                      <span className="chip" style={{ background: STATUS_META[c.status].color, color: "#fff" }}>{STATUS_META[c.status].label}</span>
+                    </div>
+                    <div className="val">{c.v}</div>
+                    <div className="note">{c.note}</div>
+                  </div>
+                ))}
+              </div>
+
+              {[["Real callers dismissed — the ones that hurt", kathyCur.missedList, "red"], ["Failed transfers — real callers lost to telephony", kathyCur.failedList, "yellow"], ["Spam that got the transfer line", kathyCur.passedList, "gray"]].map(([title, list, tone]) => (
+                list.length > 0 && (
+                  <div className="panel" key={title} style={{ marginTop: 18 }}>
+                    <div className="sectionhead" style={{ margin: "0 0 8px" }}><h2 style={{ fontSize: 17 }}>{title}</h2><small>{list.length} in range · tap a row for the transcript</small></div>
+                    {list.map((r, i) => {
+                      const key = r.cid || `${r.d}-${i}`;
+                      const isOpen = openKathyRow === key;
+                      return (
+                        <div key={key} style={{ borderBottom: `1px solid ${C.line}` }}>
+                          <div className="srcrow" style={{ cursor: "pointer", borderBottom: "none" }} onClick={() => setOpenKathyRow(isOpen ? null : key)}>
+                            <span style={{ fontWeight: 600, minWidth: 130 }}>{fmtPhone(r.ph)}</span>
+                            <span className="note">{r.d}</span>
+                            <span className="note">{r.dur ? `${r.dur}s` : ""}</span>
+                            <span className="note" style={{ marginLeft: "auto" }}>{r.disc.replace(/_/g, " ")}</span>
+                            <span className="note" style={{ width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
+                          </div>
+                          {isOpen && (
+                            <div style={{ padding: "2px 6px 12px", fontSize: 13.5 }}>
+                              {tone === "red" && r.ph && <a href={"tel:" + r.ph} className="btn" style={{ display: "inline-block", padding: "7px 16px", textDecoration: "none", marginBottom: 8 }}>Call {fmtPhone(r.ph)} back</a>}
+                              <div style={{ whiteSpace: "pre-wrap", color: C.ink, background: C.navy3, borderRadius: 6, padding: 10 }}>{r.tx || "(no transcript captured)"}</div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              ))}
+              {(() => {
+                const inRange = (data.kathy || []).filter((r) => { const t = new Date(r.d + "T12:00:00"); return t >= range[0] && t <= range[1]; });
+                const verdictOf = (r) => r.intent === "real" ? (r.transferred ? "real · transferred" : r.attempted ? "real · transfer failed" : "real · dismissed") : r.intent === "spam" ? (r.transferred || r.attempted ? "spam · offered transfer" : "spam · blocked") : "hung up early";
+                const colorOf = (r) => r.intent === "real" ? (r.transferred ? C.green : C.red) : r.intent === "spam" ? (r.attempted || r.transferred ? C.yellow : C.green) : C.gray;
+                const filtered = inRange.filter((r) => (kathyFilter === "all" ? true : r.intent === kathyFilter))
+                  .filter((r) => !kathySearch || (r.tx + " " + r.ph).toLowerCase().includes(kathySearch.toLowerCase()))
+                  .sort((a, b) => (a.d < b.d ? 1 : -1));
+                const shown = showAllKathy ? filtered : filtered.slice(0, 25);
+                return (
+                  <div className="panel" style={{ marginTop: 18 }}>
+                    <div className="sectionhead" style={{ margin: "0 0 8px" }}><h2 style={{ fontSize: 17 }}>All screened calls</h2><small>every transcript in this range, tap to read in full</small></div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+                      {[["all", "All"], ["real", "Real"], ["spam", "Spam"], ["unknown", "Hung up"]].map(([id, label]) => (
+                        <button key={id} className={"chipbtn" + (kathyFilter === id ? " on" : "")} onClick={() => setKathyFilter(id)}>{label}</button>
+                      ))}
+                      <input placeholder="Search transcripts or phone…" value={kathySearch} onChange={(e) => setKathySearch(e.target.value)} style={{ flex: "1 1 180px", minWidth: 150 }} />
+                    </div>
+                    {shown.map((r, i) => {
+                      const key = "all-" + (r.cid || `${r.d}-${i}`);
+                      const isOpen = openKathyRow === key;
+                      return (
+                        <div key={key} style={{ borderBottom: `1px solid ${C.line}` }}>
+                          <div className="srcrow" style={{ cursor: "pointer", borderBottom: "none" }} onClick={() => setOpenKathyRow(isOpen ? null : key)}>
+                            <span style={{ fontWeight: 600, minWidth: 125 }}>{fmtPhone(r.ph)}</span>
+                            <span className="note">{r.d}</span>
+                            <span className="chip" style={{ background: colorOf(r), color: "#fff" }}>{verdictOf(r)}</span>
+                            <span className="note" style={{ marginLeft: "auto", width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
+                          </div>
+                          {isOpen && (
+                            <div style={{ padding: "2px 6px 12px", fontSize: 13.5 }}>
+                              <div style={{ whiteSpace: "pre-wrap", color: C.ink, background: C.navy3, borderRadius: 6, padding: 10 }}>{r.tx || "(no transcript captured)"}</div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {filtered.length === 0 && <p className="note">No calls match that filter.</p>}
+                    {filtered.length > 25 && (
+                      <p className="note" style={{ marginTop: 8, cursor: "pointer", color: C.goldSoft, fontWeight: 600 }} onClick={() => setShowAllKathy(!showAllKathy)}>
+                        {showAllKathy ? "Show fewer" : `Show all ${filtered.length}`}
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
+              <p className="note" style={{ marginTop: 14 }}>Grading is transcript-based: a caller counts as real when their own words mention pool work, scheduling, or returning a call; spam when they pitch websites, listings, loans, and the like. Screening quality and telephony quality are graded separately on purpose.</p>
+            </>
+          )
         )}
 
         {/* ================= SCORECARD ================= */}
