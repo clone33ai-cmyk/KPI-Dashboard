@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="robots" content="noindex, nofollow" />
 <title>MPLR KPI Dashboard</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" crossorigin="anonymous"></script>
 <style>
   html, body { margin: 0; padding: 0; background: #f4f6f9; }
   #boot-error { display:none; font-family: Arial, sans-serif; padding: 28px; color: #b3392c; max-width: 720px; line-height: 1.5; }
@@ -917,6 +917,13 @@ function App() {
     });
   }, [cur, prev, manualFor]);
 
+  const kathyCur = useMemo(() => computeKathy(data.kathy, range), [data.kathy, range]);
+  const kathyPrev = useMemo(() => computeKathy(data.kathy, prevRange), [data.kathy, prevRange]);
+  const [openKathyRow, setOpenKathyRow] = useState(null);
+  const [kathyFilter, setKathyFilter] = useState("all");
+  const [kathySearch, setKathySearch] = useState("");
+  const [showAllKathy, setShowAllKathy] = useState(false);
+
   /* open estimates: pending right now, converted-by-phone treated as closed */
   const openEstimates = useMemo(() => {
     const est = data.estimates || [];
@@ -1064,13 +1071,6 @@ function App() {
   }, [comparePreset, cmpA1, cmpA2, cmpB1, cmpB2]);
   const cmpA = useMemo(() => (compareRanges.a ? computeStats(dataIdx, compareRanges.a, data.numFilter, data.manual) : null), [dataIdx, compareRanges, data.numFilter, data.manual]);
   const cmpB = useMemo(() => (compareRanges.b ? computeStats(dataIdx, compareRanges.b, data.numFilter, data.manual) : null), [dataIdx, compareRanges, data.numFilter, data.manual]);
-
-  const kathyCur = useMemo(() => computeKathy(data.kathy, range), [data.kathy, range]);
-  const kathyPrev = useMemo(() => computeKathy(data.kathy, prevRange), [data.kathy, prevRange]);
-  const [openKathyRow, setOpenKathyRow] = useState(null);
-  const [kathyFilter, setKathyFilter] = useState("all");
-  const [kathySearch, setKathySearch] = useState("");
-  const [showAllKathy, setShowAllKathy] = useState(false);
 
   /* drill-down state for the Overview lists */
   const [openEstRow, setOpenEstRow] = useState(null);
@@ -1397,7 +1397,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 28</div>
+            <div className="sub">KPI Dashboard · build 29</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
