@@ -179,6 +179,7 @@ const SOURCES = {
       { id: "outcome", label: "Outcome (open/won/lost)", required: false, match: ["outcome"] },
       { id: "status", label: "Estimate status", required: false, match: ["estimate status", "status"] },
       { id: "amount", label: "Open value", required: false, match: ["open value", "estimate total", "estimate amount", "total", "amount"] },
+      { id: "wonval", label: "Won value", required: false, match: ["won value"] },
       { id: "name", label: "Customer name", required: false, match: ["customer name", "customer", "name"] },
       { id: "phone", label: "Customer phone (if present)", required: false, match: ["customer mobile number", "mobile", "customer phone", "phone"] },
       { id: "eid", label: "Estimate number", required: false, match: ["estimate #", "estimate number", "estimate id"] },
@@ -380,6 +381,7 @@ function normalizeRow(type, raw, map) {
     if (jid) base.jid = jid;
     const pAmt = parseNum(get("paidAmt"));
     if (pAmt !== null) base.paidAmt = pAmt;
+
     const pDate = parseDate(get("paidDate"));
     if (pDate) base.pd = dkey(pDate);
     base.ph = normPhone(get("phone"));
@@ -462,7 +464,8 @@ function normalizeRow(type, raw, map) {
       base.closed = !pending && /approv|won|convert|copied|decline|lost|expire|dismiss|cancel|closed|invoiced|scheduled/.test(st);
     }
     base.st = String(get("status") || "").trim() || outcome;
-    base.amt = parseNum(get("amount")) || 0;
+    if (outcome) base.oc = outcome;
+    base.amt = parseNum(get("amount")) || parseNum(get("wonval")) || 0;
     base.nm = String(get("name") || "").trim();
     base.ph = normPhone(get("phone"));
     const clip = (v, n) => { const s = String(v || "").trim(); return s.length > n ? s.slice(0, n) + "…" : s; };
@@ -789,7 +792,7 @@ const fmtVal = (m, v) => {
 /* ================================================================ */
 
 function App() {
-  const [data, setData] = useState({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], manual: {}, numFilter: {}, numMeta: {}, mapMemory: {} });
+  const [data, setData] = useState({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {} });
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("overview");
   const [preset, setPreset] = useState("mtd");
@@ -822,14 +825,14 @@ function App() {
         const r = await store.get(STORAGE_KEY);
         if (r && r.value) {
           const parsed = JSON.parse(r.value);
-          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
+          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
           fromStore = true;
         }
       } catch (e) { /* nothing stored */ }
       /* embedded default dataset: used whenever nothing is saved in this
          browser (e.g. Google Sites). Saved data always wins over it. */
       if (!fromStore && typeof window !== "undefined" && window.MPLR_DEFAULT_DATA) {
-        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...window.MPLR_DEFAULT_DATA });
+        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...window.MPLR_DEFAULT_DATA });
       }
       setLoaded(true);
     })();
@@ -965,7 +968,7 @@ function App() {
         const stillPending = (d.kathy || []).some((r) => !r.ai && r.cid && r.tx);
         if (!stillPending) {
           clearInterval(t);
-          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
+          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
         }
       } catch (e) { /* keep trying */ }
     }, 10000);
@@ -978,6 +981,17 @@ function App() {
   const [kathyFilter, setKathyFilter] = useState("all");
   const [kathySearch, setKathySearch] = useState("");
   const [showAllKathy, setShowAllKathy] = useState(false);
+
+  /* phone comes ONLY from the estimate's own row (the export's phone
+     column) — never inferred from names, which collide */
+  const estPhone = (e) => e.ph || "";
+  const logCall = (eid) => {
+    if (!eid) return;
+    const f = { ...(data.followups || {}) };
+    const curF = f[eid] || { n: 0 };
+    f[eid] = { n: curF.n + 1, last: dkey(new Date()) };
+    persist({ ...data, followups: f });
+  };
 
   /* open estimates: pending right now, converted-by-phone treated as closed */
   const openEstimates = useMemo(() => {
@@ -1130,6 +1144,7 @@ function App() {
   /* drill-down state for the Overview lists */
   const [openEstRow, setOpenEstRow] = useState(null);
   const [estAgeFilter, setEstAgeFilter] = useState("all");
+  const [estView, setEstView] = useState("open");
   const [showAllEst, setShowAllEst] = useState(false);
   const [openCallRow, setOpenCallRow] = useState(null);
   const [showAllCalls, setShowAllCalls] = useState(false);
@@ -1311,7 +1326,7 @@ function App() {
     reader.onload = (e) => {
       try {
         const parsed = JSON.parse(e.target.result);
-        const next = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed };
+        const next = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed };
         persist(next);
         setUploadMsg({ ok: true, text: "Backup restored." });
       } catch (err) { setUploadMsg({ ok: false, text: "That doesn't look like a dashboard backup file." }); }
@@ -1455,7 +1470,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 33</div>
+            <div className="sub">KPI Dashboard · build 35</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1629,8 +1644,58 @@ function App() {
               })()}
               {openEstimates && (
                 <div className="panel" style={{ marginTop: 20 }}>
-                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Open estimates pipeline</h2><small>right-now snapshot from the estimates upload, not filtered by date range</small></div>
-                  {openEstimates.open.length === 0 ? (
+                  <div className="sectionhead" style={{ margin: "0 0 4px", alignItems: "center" }}>
+                    <h2>{estView === "open" ? "Open estimates pipeline" : estView === "won" ? "Won estimates" : "Lost estimates"}</h2>
+                    <small>{estView === "open" ? "right-now snapshot, not filtered by date range" : "newest first, from the estimates upload"}</small>
+                    <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                      {[["open", "Open"], ["won", "Won"], ["lost", "Lost"]].map(([id, label]) => (
+                        <button key={id} className={"chipbtn" + (estView === id ? " on" : "")} onClick={() => setEstView(id)}>{label}</button>
+                      ))}
+                    </div>
+                  </div>
+                  {estView !== "open" ? (() => {
+                    const wanted = estView;
+                    const rowsAll = (data.estimates || []).filter((e) => (e.oc || (e.closed ? "won" : "open")) === wanted).sort((a, b) => (a.d < b.d ? 1 : -1));
+                    const shown = showAllEst ? rowsAll : rowsAll.slice(0, 10);
+                    const totalVal = rowsAll.reduce((a, e) => a + (e.amt || 0), 0);
+                    return (
+                      <>
+                        <div className="val" style={{ fontSize: 34, margin: "8px 0 2px" }}>
+                          {rowsAll.length.toLocaleString()}<span style={{ fontSize: 19, color: C.dim }}> {wanted} · ${Math.round(totalVal).toLocaleString()}</span>
+                        </div>
+                        {shown.map((e, i) => {
+                          const key = "v-" + (e.eid || `${e.d}-${i}`);
+                          const isOpen = openEstRow === key;
+                          const fp = (data.followups || {})[e.eid];
+                          const ph = estPhone(e);
+                          return (
+                            <div key={key} style={{ borderBottom: `1px solid ${C.line}` }}>
+                              <div className="srcrow" style={{ cursor: "pointer", borderBottom: "none" }} onClick={() => setOpenEstRow(isOpen ? null : key)}>
+                                <span style={{ fontWeight: 600, minWidth: 140 }}>{e.nm || "—"}</span>
+                                <span className="note">{e.d}</span>
+                                <span className="note">{e.amt ? `$${Math.round(e.amt).toLocaleString()}` : ""}</span>
+                                {fp && <span className="pill" style={{ background: C.gold, color: C.onGold }}>Called {fp.n}×</span>}
+                                <span className="note" style={{ marginLeft: "auto", width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
+                              </div>
+                              {isOpen && (
+                                <div style={{ padding: "2px 6px 12px", fontSize: 13.5, display: "grid", gap: 5 }}>
+                                  {ph && <div><span className="note">Phone:</span> <b>{fmtPhone(ph)}</b></div>}
+                                  {e.desc && <div><span className="note">Work:</span> {e.desc}</div>}
+                                  {e.addr && <div><span className="note">Address:</span> {e.addr}</div>}
+                                  {fp && <div><span className="note">Follow-ups:</span> called {fp.n}×, last {fp.last}</div>}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {rowsAll.length > 10 && (
+                          <p className="note" style={{ marginTop: 8, cursor: "pointer", color: C.goldSoft, fontWeight: 600 }} onClick={() => setShowAllEst(!showAllEst)}>
+                            {showAllEst ? "Show fewer" : `Show all ${rowsAll.length.toLocaleString()}`}
+                          </p>
+                        )}
+                      </>
+                    );
+                  })() : openEstimates.open.length === 0 ? (
                     <p className="note">All {openEstimates.total.toLocaleString()} estimates on file are closed or converted. Clean pipeline.</p>
                   ) : (
                     <>
@@ -1660,9 +1725,10 @@ function App() {
                               return (
                                 <div key={key} style={{ borderBottom: `1px solid ${C.line}` }}>
                                   <div className="srcrow" style={{ cursor: "pointer", borderBottom: "none" }} onClick={() => setOpenEstRow(isOpen ? null : key)}>
-                                    <span style={{ fontWeight: 600, minWidth: 140 }}>{e.nm || fmtPhone(e.ph)}</span>
-                                    <span className="note">{e.d}{e.st ? ` · ${e.st}` : ""}</span>
+                                    <span style={{ fontWeight: 600, minWidth: 140 }}>{e.nm || fmtPhone(estPhone(e))}</span>
+                                    <span className="note">{estPhone(e) ? fmtPhone(estPhone(e)) : "no phone yet"}</span>
                                     <span className="note">{e.amt ? `$${Math.round(e.amt).toLocaleString()}` : ""}</span>
+                                    {(data.followups || {})[e.eid] && <span className="pill" style={{ background: C.gold, color: C.onGold }}>Called {(data.followups || {})[e.eid].n}×</span>}
                                     <span style={{ marginLeft: "auto", fontWeight: 600, color: e.age > 30 ? C.red : e.age > 7 ? C.yellow : C.green }}>{e.age}d old</span>
                                     <span className="note" style={{ width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
                                   </div>
@@ -1672,8 +1738,17 @@ function App() {
                                       {e.desc && <div><span className="note">Work:</span> {e.desc}</div>}
                                       {e.addr && <div><span className="note">Address:</span> {e.addr}</div>}
                                       {e.notes && <div><span className="note">Notes:</span> {e.notes}</div>}
-                                      {e.ph && <a href={"tel:" + e.ph} className="btn" style={{ display: "inline-block", padding: "7px 16px", textDecoration: "none", marginTop: 4 }}>Call {fmtPhone(e.ph)}</a>}
-                                      {!e.desc && !e.addr && !e.notes && <div className="note">No description, address, or notes captured yet: re-upload the estimates export once and these fill in (the columns are now read).</div>}
+                                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
+                                        {estPhone(e) && <a href={"tel:" + estPhone(e)} className="btn" style={{ display: "inline-block", padding: "7px 16px", textDecoration: "none" }}>Call {fmtPhone(estPhone(e))}</a>}
+                                        {e.eid && (
+                                          <button className="btn ghost" style={{ padding: "7px 16px" }} onClick={(ev) => { ev.stopPropagation(); logCall(e.eid); }}>
+                                            {(data.followups || {})[e.eid] ? `Called ${(data.followups || {})[e.eid].n}× — log another` : "Called — log it"}
+                                          </button>
+                                        )}
+                                      </div>
+                                      {(data.followups || {})[e.eid] && <div className="note">Last follow-up: {(data.followups || {})[e.eid].last}</div>}
+                                      {!estPhone(e) && <div className="note">No phone: add the Customer mobile number column to the HCP estimates export and re-upload, and every estimate gets a direct number.</div>}
+                                      {!e.desc && !e.addr && !e.notes && <div className="note">No description, address, or notes captured yet: re-upload the estimates export once and these fill in.</div>}
                                     </div>
                                   )}
                                 </div>
@@ -1776,7 +1851,7 @@ function App() {
                         const j = await r.json();
                         if (!r.ok) { setUploadMsg({ ok: false, text: j.error || "AI grading failed" }); return; }
                         const d = await fetch("/api/data").then((x) => x.json());
-                        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
+                        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
                         setUploadMsg({ ok: true, text: `AI graded ${j.graded || 0} calls${j.changed ? ` · ${j.changed} verdicts changed` : ""}.` });
                       } catch (e) { setUploadMsg({ ok: false, text: "AI grading failed: " + e.message }); }
                     }}>Grade {pending} now</button>
