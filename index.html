@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="robots" content="noindex, nofollow" />
 <title>MPLR KPI Dashboard</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js" crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   html, body { margin: 0; padding: 0; background: #f4f6f9; }
   #boot-error { display:none; font-family: Arial, sans-serif; padding: 28px; color: #b3392c; max-width: 720px; line-height: 1.5; }
@@ -197,7 +197,6 @@ const SOURCES = {
       { id: "from", label: "From (caller)", required: false, match: ["from", "caller"] },
       { id: "duration", label: "Call Duration", required: false, match: ["call duration", "duration"] },
       { id: "cid", label: "Call ID", required: false, match: ["call id"] },
-      { id: "rec", label: "Recording URL", required: false, match: ["recording url", "recording", "audio url", "call audio"] },
     ],
   },
   lsabill: {
@@ -402,37 +401,14 @@ function normalizeRow(type, raw, map) {
       const u = seg.split(/User:/).slice(1).join(" ");
       return u;
     }).join(" ").toLowerCase() || tx.split(/User:/).slice(1).join(" ").toLowerCase();
-    /* v3 classifier: scored, not precedence-based.
-       1. Scrub identity-verification phrases — spam callers recite OUR
-          business name ("have I reached mister Full Leak Repair?") and the
-          name itself contains pool words. Those phrases are neutral.
-       2. Count distinct strong-real vs strong-spam signals; higher count
-          wins; tie or nothing = unknown. */
-    const scrubbed = userText
-      .replace(/(have i reached|am i speaking (with|to)|is this|reached) (mister|mr\.?|miss|ms\.?)?[^.?!]{0,50}/g, " ")
-      .replace(/(mister|mr\.?) [a-z]+( [a-z]+){0,3}/g, " ");
-    const REAL_PATTERNS = [
-      /pool/, /leak/, /\brepair/, /quote/, /estimate/, /plaster/, /remodel/, /tile/, /deck/, /pump/, /filter/, /heater/, /spa\b/, /equipment/,
-      /appointment/, /schedul/, /come (out|by)/, /technician/, /invoice/,
-      /returning (a|your) call/, /call(ed)? (me|us|you) (back|earlier|yesterday)/,
-      /found (you|your)/, /saw your/, /came across your/, /referred/, /neighbor/, /friend (told|said)/,
-      /my (house|home|backyard|water bill|yard)/,
-    ];
-    const SPAM_PATTERNS = [
-      /business listing/, /your listing/, /update your (business|listing|file)/, /express update/,
-      /offering (my|our) services/, /line of credit/, /lending/, /\bloan\b/, /pre-?approved/, /funding/, /merchant/, /credit card processing/,
-      /warranty (department|expir)/, /final notice/, /press \d/, /\birs\b/, /insurance (quote|plan)/, /solar panel/,
-      /call list/, /remove me/, /\bsell(ing)?\b/, /new website/, /websites?[\s\S]{0,50}?(you want|you'?d like|like one|want one|interested)/,
-      /(starting|making|installing|going|doing|offering) websites?/, /web ?design/, /redo your (site|website)/, /do you (guys )?(have|want|need) (a |one )?(website|site)/, /\bseo\b/, /google (listing|business)/,
-      /marketing/, /advertis/, /promot/, /survey/, /special offer/,
-      /this is \w+ (with|from) [\w ]{0,40}(lending|credit|capital|solutions|marketing|media|group|llc)/,
-      /reach me (directly )?at/, /call me back at/, /(eight|nine|seven|six|five|four|three|two|one|zero)( |-)?((eight|nine|seven|six|five|four|three|two|one|zero)( |-)?){6,}/,
-    ];
-    const realScore = REAL_PATTERNS.filter((p) => p.test(scrubbed)).length;
-    const spamScore = SPAM_PATTERNS.filter((p) => p.test(scrubbed)).length;
+    /* Real-customer language checked FIRST and wins ties. Discovery phrases
+       ("found your website") are customer language; selling intent
+       ("selling websites", "want a new website") is what marks spam. */
+    const REAL = /pool|leak|repair|quote|estimate|plaster|remodel|tile|deck|pump|filter|heater|spa\b|equipment|service|appointment|schedul|returning|call.?back|spoke|talked|technician|invoice|found (you|your)|saw your|came across your|referred|neighbor|friend (told|said)/;
+    const SPAM = /\bsell|selling|new website|build(ing)? ?websites?|web ?design|redo your|i make websites|do you (guys )?(have|want|need) (a |one )?(website|site)|websites?[\s\S]{0,50}?(you want|you'?d like|like one|want one|interested)|(starting|making|installing|going|doing|offering) websites?|seo\b|google (listing|business)|business listing|\blisting\b|marketing|advertis|promot|\bloan\b|funding|insurance|solar|call list|remove me|do you want one|survey|special offer/;
     let intent = "unknown";
-    if (realScore > spamScore) intent = "real";
-    else if (spamScore > realScore) intent = "spam";
+    if (REAL.test(userText)) intent = "real";
+    else if (SPAM.test(userText)) intent = "spam";
     /* what Kathy did */
     const attempted = disc === "call_transfer" || /forward you to our dispatch|over to our dispatch|transfer you|connect you (to|with)/i.test(tx);
     const transferred = disc === "call_transfer";
@@ -447,8 +423,6 @@ function normalizeRow(type, raw, map) {
     base.tx = tx.length > 2000 ? tx.slice(0, 2000) + "…" : tx;
     const cid = String(get("cid") || "").trim();
     if (cid) base.cid = cid;
-    const rec = String(get("rec") || "").trim();
-    if (/^https?:\/\//.test(rec)) base.rec = rec;
   }
   if (type === "estimates") {
     const outcome = lc(get("outcome"));
@@ -943,13 +917,6 @@ function App() {
     });
   }, [cur, prev, manualFor]);
 
-  const kathyCur = useMemo(() => computeKathy(data.kathy, range), [data.kathy, range]);
-  const kathyPrev = useMemo(() => computeKathy(data.kathy, prevRange), [data.kathy, prevRange]);
-  const [openKathyRow, setOpenKathyRow] = useState(null);
-  const [kathyFilter, setKathyFilter] = useState("all");
-  const [kathySearch, setKathySearch] = useState("");
-  const [showAllKathy, setShowAllKathy] = useState(false);
-
   /* open estimates: pending right now, converted-by-phone treated as closed */
   const openEstimates = useMemo(() => {
     const est = data.estimates || [];
@@ -1098,6 +1065,13 @@ function App() {
   const cmpA = useMemo(() => (compareRanges.a ? computeStats(dataIdx, compareRanges.a, data.numFilter, data.manual) : null), [dataIdx, compareRanges, data.numFilter, data.manual]);
   const cmpB = useMemo(() => (compareRanges.b ? computeStats(dataIdx, compareRanges.b, data.numFilter, data.manual) : null), [dataIdx, compareRanges, data.numFilter, data.manual]);
 
+  const kathyCur = useMemo(() => computeKathy(data.kathy, range), [data.kathy, range]);
+  const kathyPrev = useMemo(() => computeKathy(data.kathy, prevRange), [data.kathy, prevRange]);
+  const [openKathyRow, setOpenKathyRow] = useState(null);
+  const [kathyFilter, setKathyFilter] = useState("all");
+  const [kathySearch, setKathySearch] = useState("");
+  const [showAllKathy, setShowAllKathy] = useState(false);
+
   /* drill-down state for the Overview lists */
   const [openEstRow, setOpenEstRow] = useState(null);
   const [estAgeFilter, setEstAgeFilter] = useState("all");
@@ -1135,20 +1109,17 @@ function App() {
       kept.forEach((r, i) => { if (r.cid) byId[r.cid] = i; });
       const seenNoId = new Set(kept.filter((r) => !r.cid).map((r) => JSON.stringify(r)));
       let addedCount = 0, dupes = 0;
-      let updated = 0;
       normalized.forEach((r) => {
         if (r.cid) {
-          if (byId[r.cid] !== undefined) {
-            const i = byId[r.cid];
-            if (JSON.stringify(kept[i]) !== JSON.stringify(r)) { kept[i] = r; updated++; } else dupes++;
-          } else { byId[r.cid] = kept.length; kept.push(r); addedCount++; }
+          if (byId[r.cid] !== undefined) dupes++;
+          else { byId[r.cid] = kept.length; kept.push(r); addedCount++; }
         } else {
           const k = JSON.stringify(r);
           if (seenNoId.has(k)) dupes++; else { seenNoId.add(k); kept.push(r); addedCount++; }
         }
       });
       working.kathy = kept.sort((a, b) => (a.d < b.d ? -1 : 1));
-      return { added: addedCount, dupes, updated };
+      return { added: addedCount, dupes, updated: 0 };
     }
 
     if (type === "estimates") {
@@ -1426,7 +1397,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 31</div>
+            <div className="sub">KPI Dashboard · build 28</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1734,32 +1705,7 @@ function App() {
             </div>
           ) : (
             <>
-              <div className="sectionhead" style={{ alignItems: "center" }}>
-                <h2>Screening scorecard</h2>
-                <small>{kathyCur.screened} calls screened in this range · {(data.kathy || []).filter((r) => r.ai).length ? "AI-graded" : "pattern-graded"} from transcripts</small>
-                {SERVER_MODE && (
-                  <button className="btn ghost" style={{ marginLeft: "auto", padding: "6px 14px" }} onClick={async () => {
-                    const ungraded = (data.kathy || []).filter((r) => !r.ai && r.cid && r.tx);
-                    if (!ungraded.length) { setUploadMsg({ ok: true, text: "All calls are already AI-graded." }); return; }
-                    setUploadMsg({ ok: true, text: `AI is reading ${Math.min(ungraded.length, 400)} transcripts…` });
-                    try {
-                      const r = await fetch("/api/kathy-grade", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ calls: ungraded.slice(0, 400).map((c) => ({ cid: c.cid, tx: c.tx })) }) });
-                      const j = await r.json();
-                      if (!r.ok) { setUploadMsg({ ok: false, text: j.error || "AI grading failed" }); return; }
-                      let changed = 0;
-                      const next = (data.kathy || []).map((row) => {
-                        const g = row.cid && j.grades[row.cid];
-                        if (!g) return row;
-                        if (g !== row.intent) changed++;
-                        return { ...row, intent: g, ai: true };
-                      });
-                      persist({ ...data, kathy: next });
-                      setUploadMsg({ ok: true, text: `AI graded ${j.graded} calls · ${changed} verdicts changed from the pattern grades.` });
-                    } catch (e) { setUploadMsg({ ok: false, text: "AI grading failed: " + e.message }); }
-                  }}>AI-grade calls</button>
-                )}
-              </div>
-              {uploadMsg && tab === "kathy" && <p className="note" style={{ color: uploadMsg.ok ? C.green : C.red, marginBottom: 10 }}>{uploadMsg.text}</p>}
+              <div className="sectionhead"><h2>Screening scorecard</h2><small>{kathyCur.screened} calls screened in this range · graded from transcripts</small></div>
               <div className="grid">
                 {[
                   { name: "Real callers transferred", v: kathyCur.real ? `${kathyCur.realTransferred}/${kathyCur.real}` : "—", pct: kathyCur.accuracy, status: kathyCur.accuracy == null ? "empty" : kathyCur.accuracy >= 95 ? "green" : kathyCur.accuracy >= 80 ? "yellow" : "red", note: kathyCur.accuracy != null ? `${kathyCur.accuracy.toFixed(0)}% of real callers reached dispatch${kathyPrev.accuracy != null ? ` · prior period ${kathyPrev.accuracy.toFixed(0)}%` : ""}` : "No real callers identified in range" },
@@ -1799,9 +1745,7 @@ function App() {
                           {isOpen && (
                             <div style={{ padding: "2px 6px 12px", fontSize: 13.5 }}>
                               {tone === "red" && r.ph && <a href={"tel:" + r.ph} className="btn" style={{ display: "inline-block", padding: "7px 16px", textDecoration: "none", marginBottom: 8 }}>Call {fmtPhone(r.ph)} back</a>}
-                              {r.rec && <audio controls preload="none" src={r.rec} style={{ width: "100%", marginBottom: 8 }} />}
                               <div style={{ whiteSpace: "pre-wrap", color: C.ink, background: C.navy3, borderRadius: 6, padding: 10 }}>{r.tx || "(no transcript captured)"}</div>
-                              {r.rec && <a href={r.rec} target="_blank" rel="noopener" className="note" style={{ display: "inline-block", marginTop: 6 }}>Open recording in new tab ↗</a>}
                             </div>
                           )}
                         </div>
@@ -1812,7 +1756,7 @@ function App() {
               ))}
               {(() => {
                 const inRange = (data.kathy || []).filter((r) => { const t = new Date(r.d + "T12:00:00"); return t >= range[0] && t <= range[1]; });
-                const verdictOf = (r) => (r.intent === "real" ? (r.transferred ? "real · transferred" : r.attempted ? "real · transfer failed" : "real · dismissed") : r.intent === "spam" ? (r.transferred || r.attempted ? "spam · offered transfer" : "spam · blocked") : "hung up early") + (r.ai ? " · AI" : "");
+                const verdictOf = (r) => r.intent === "real" ? (r.transferred ? "real · transferred" : r.attempted ? "real · transfer failed" : "real · dismissed") : r.intent === "spam" ? (r.transferred || r.attempted ? "spam · offered transfer" : "spam · blocked") : "hung up early";
                 const colorOf = (r) => r.intent === "real" ? (r.transferred ? C.green : C.red) : r.intent === "spam" ? (r.attempted || r.transferred ? C.yellow : C.green) : C.gray;
                 const filtered = inRange.filter((r) => (kathyFilter === "all" ? true : r.intent === kathyFilter))
                   .filter((r) => !kathySearch || (r.tx + " " + r.ph).toLowerCase().includes(kathySearch.toLowerCase()))
@@ -1840,9 +1784,7 @@ function App() {
                           </div>
                           {isOpen && (
                             <div style={{ padding: "2px 6px 12px", fontSize: 13.5 }}>
-                              {r.rec && <audio controls preload="none" src={r.rec} style={{ width: "100%", marginBottom: 8 }} />}
                               <div style={{ whiteSpace: "pre-wrap", color: C.ink, background: C.navy3, borderRadius: 6, padding: 10 }}>{r.tx || "(no transcript captured)"}</div>
-                              {r.rec && <a href={r.rec} target="_blank" rel="noopener" className="note" style={{ display: "inline-block", marginTop: 6 }}>Open recording in new tab ↗</a>}
                             </div>
                           )}
                         </div>
