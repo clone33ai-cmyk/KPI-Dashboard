@@ -142,6 +142,7 @@ const SOURCES = {
     fields: [
       { id: "date", label: "Job created date", required: true, match: ["job created date", "created", "creation"] },
       { id: "phone", label: "Customer phone", required: true, match: ["customer mobile number", "customer phone", "mobile", "phone"] },
+      { id: "desc", label: "Job description (for sales categories)", required: false, match: ["job description", "description"] },
       { id: "amount", label: "Job amount", required: true, match: ["job amount", "job total", "invoice total", "amount", "total"] },
       { id: "status", label: "Job status", required: false, match: ["job status", "status"] },
       { id: "completed", label: "Completed date", required: false, match: ["job completed date", "completed", "completion"] },
@@ -261,6 +262,27 @@ const normPhone = (v) => {
 
 /* local calendar date: never use toISOString here — it converts to UTC and
    shifts midnight-local dates to the previous day in UTC+ timezones */
+/* sales category from the HCP job description; rules tuned on real data */
+function jobCategory(desc, amt) {
+  const s = String(desc || "").toLowerCase();
+  if (/drain (and|&|n)? ?seal|seal restoration|leak seal|underwater seal|drain pool|drenar/.test(s)) return "Drain & Seal";
+  if (/equipment (diagnostic|inspection)|diagnostic service/.test(s)) return "Equipment Inspection";
+  if (/pump|filter|heater|motor|salt cell|actuator|booster|automation|equipment (repair|install|replace)/.test(s)) return "Equipment";
+  if (/pipe repair|under the dirt|underground|excavat|re-?route|skimmer/.test(s)) return "Pipe/Skimmer Repair";
+  if (/structural|pier|crack|epoxy|injection/.test(s)) return "Structural";
+  if (/plaster|resurfac|pebble/.test(s)) return "Plaster/Resurface";
+  if (/remodel/.test(s)) return "Remodel";
+  if (/tile|coping/.test(s)) return "Tile & Coping";
+  if (/\bdeck/.test(s)) return "Deck";
+  if (/light/.test(s)) return "Lighting";
+  if (/ld notes|leak repair|3 year no leak/.test(s)) return "Leak Repair";
+  if (/leak detect|detection|leak diagnosis|go back/.test(s)) return "Leak Detection";
+  if (/\*|notas|check notes|check pickup|pick ?up check|ayudar|fotos?\b/.test(s)) return "Internal/Tasks";
+  if (/\brepair/.test(s)) return "Leak Repair";
+  if (amt >= 370 && amt <= 380) return "Leak Detection";
+  return s ? "Other" : "No description";
+}
+
 function computeKathy(rows, [a, b]) {
   const inR = (rows || []).filter((r) => { const t = new Date(r.d + "T12:00:00"); return t >= a && t <= b; });
   const out = { screened: inR.length, real: 0, realTransferred: 0, realFailed: 0, realMissed: 0, spamBlocked: 0, spamPassed: 0, unknown: 0, missedList: [], failedList: [], passedList: [] };
@@ -385,6 +407,8 @@ function normalizeRow(type, raw, map) {
     const pDate = parseDate(get("paidDate"));
     if (pDate) base.pd = dkey(pDate);
     base.ph = normPhone(get("phone"));
+    const jdRaw = String(get("desc") || "").trim();
+    if (jdRaw) base.jd = jdRaw.length > 90 ? jdRaw.slice(0, 90) : jdRaw;
     const st = lc(get("status"));
     const compDate = parseDate(get("completed"));
     base.cd = compDate ? dkey(compDate) : null;
@@ -705,8 +729,18 @@ function computeStats(data, range, numFilter, manual) {
     else { wkdayTot++; if (c.answered) wkdayAns++; }
   });
 
+  /* sales by service type: paid jobs in range, categorized by description */
+  const catPerf = {};
+  revenueJobs.forEach((j) => {
+    const c = jobCategory(j.jd, j.amt);
+    if (!catPerf[c]) catPerf[c] = { jobs: 0, revenue: 0 };
+    catPerf[c].jobs++;
+    catPerf[c].revenue += j.paidAmt != null ? j.paidAmt : j.amt;
+  });
+
   return {
     srcPerf,
+    catPerf,
     missedOps,
     split: { wkdayTot, wkdayAns, wkendTot, wkendAns },
     counts: {
@@ -1478,7 +1512,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 36</div>
+            <div className="sub">KPI Dashboard · build 37</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1554,6 +1588,35 @@ function App() {
                   <div style={{ marginTop: 6, color: C.goldSoft, fontWeight: 600, fontSize: 13.5 }}>→ {ins.action}</div>
                 </div>
               ))}
+
+              {Object.keys(cur.catPerf || {}).length > 0 && (
+                <div className="panel" style={{ marginTop: 20 }}>
+                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Sales by service type</h2><small>paid jobs in this range, categorized from job descriptions</small></div>
+                  {(() => {
+                    const entries = Object.entries(cur.catPerf).sort((a, b) => b[1].revenue - a[1].revenue);
+                    const totalRev = entries.reduce((a, [, p]) => a + p.revenue, 0);
+                    const noDesc = cur.catPerf["No description"];
+                    return (
+                      <>
+                        {entries.filter(([c, p]) => p.revenue > 0 || p.jobs > 0).map(([c, p]) => (
+                          <div className="srcrow" key={c}>
+                            <span style={{ fontWeight: 600, minWidth: 170 }}>{c}</span>
+                            <span className="note">{p.jobs} job{p.jobs === 1 ? "" : "s"}</span>
+                            <span style={{ fontWeight: 800, color: C.ink }}>${Math.round(p.revenue).toLocaleString()}</span>
+                            <span className="note">avg ${Math.round(p.revenue / Math.max(1, p.jobs)).toLocaleString()}</span>
+                            <span style={{ marginLeft: "auto", color: C.goldSoft, fontWeight: 600 }}>{totalRev ? ((p.revenue / totalRev) * 100).toFixed(1) : 0}%</span>
+                          </div>
+                        ))}
+                        {noDesc && noDesc.jobs > 0 && (
+                          <p className="note" style={{ marginTop: 8 }}>
+                            {noDesc.jobs} paid job{noDesc.jobs === 1 ? "" : "s"} have no description on file. If most jobs land here, re-upload the HCP jobs export once so descriptions are captured (the column is now read).
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
 
               {(cur.missedOps || []).length > 0 && (
                 <div className="panel" style={{ marginTop: 20 }}>
