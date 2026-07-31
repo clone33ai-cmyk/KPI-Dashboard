@@ -1236,6 +1236,7 @@ function App() {
     const files = Array.from(fileList);
     const working = { ...data, mapMemory: { ...(data.mapMemory || {}) } };
     let added = 0, dupes = 0, imported = 0, unreadable = 0, updatedCount = 0;
+    let jobsDescNote = "";
     const needsMapping = [];
     for (const file of files) {
       let table = null;
@@ -1458,7 +1459,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 53</div>
+            <div className="sub">KPI Dashboard · build 54</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
