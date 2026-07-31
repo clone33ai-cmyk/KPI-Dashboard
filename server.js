@@ -36,7 +36,7 @@ app.use((req, res, next) => {
 });
 
 /* ---------------- storage ---------------- */
-const EMPTY = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, meta: {} };
+const EMPTY = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, meta: {} };
 
 function loadData() {
   try { return { ...EMPTY, ...JSON.parse(fs.readFileSync(DATA_FILE, "utf8")) }; }
