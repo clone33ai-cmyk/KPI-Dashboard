@@ -190,16 +190,6 @@ const SOURCES = {
       { id: "notes", label: "Notes", required: false, match: ["notes"] },
     ],
   },
-  svcmix: {
-    label: "Housecall Pro — Services / Materials on jobs reports (Reporting → Jobs)",
-    tip: "HCP line-item totals: the services AND materials reports both fit here and combine into one mix. One row per item with quantity and gross revenue. Re-uploads update items by name.",
-    fields: [
-      { id: "name", label: "Service item name", required: true, match: ["service item name", "material name", "service item", "item name", "material", "service"] },
-      { id: "revenue", label: "Gross revenue", required: true, match: ["gross revenue", "revenue"] },
-      { id: "qty", label: "Total quantity", required: false, match: ["total quantity", "quantity", "qty"] },
-      { id: "jcount", label: "Job count", required: false, match: ["job count", "jobs"] },
-    ],
-  },
   invoices: {
     label: "Housecall Pro — Invoices export",
     tip: "Powers the Outstanding Invoices panel: open balances, aging, and a collections list with phones. Needs Invoice # and Amount due; status, dates, name, phone make it complete.",
@@ -410,7 +400,7 @@ function normalizeRow(type, raw, map) {
   }
 
   const date = parseDate(get("date"));
-  if (!date && type !== "invoices" && type !== "svcmix") return null;
+  if (!date && type !== "invoices") return null;
   const base = { d: date ? dkey(date) : "1970-01-01" };
 
   if (type === "calls") {
@@ -450,14 +440,6 @@ function normalizeRow(type, raw, map) {
     const ch = lc(get("charged"));
     base.charged = ch === "" ? true : /charg|yes|true|billable/.test(ch) && !/not|un|refund|credit/.test(ch);
     base.ph = normPhone(get("phone"));
-  }
-  if (type === "svcmix") {
-    const snm = String(get("name") || "").trim();
-    if (!snm || snm.toLowerCase() === "total") return null; /* skip the report's Total row */
-    base.nm = snm.slice(0, 90);
-    base.rev = parseNum(get("revenue")) || 0;
-    base.qty = Math.round(parseNum(get("qty")) || 0);
-    base.jc = Math.round(parseNum(get("jcount")) || 0);
   }
   if (type === "invoices") {
     const iid = String(get("iid") || "").replace(/\D/g, "");
@@ -907,7 +889,7 @@ const fmtVal = (m, v) => {
 /* ================================================================ */
 
 function App() {
-  const [data, setData] = useState({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {} });
+  const [data, setData] = useState({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {} });
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("overview");
   const [preset, setPreset] = useState("mtd");
@@ -930,7 +912,7 @@ function App() {
     empty: { label: "No data", color: C.gray },
     manual: { label: "Manual", color: C.gray },
   };
-  const fileRefs = { calls: useRef(), jobs: useRef(), ads: useRef(), lsa: useRef(), lsabill: useRef(), estimates: useRef(), kathy: useRef(), invoices: useRef(), svcmix: useRef() };
+  const fileRefs = { calls: useRef(), jobs: useRef(), ads: useRef(), lsa: useRef(), lsabill: useRef(), estimates: useRef(), kathy: useRef(), invoices: useRef() };
   const backupRef = useRef();
 
   useEffect(() => {
@@ -940,14 +922,14 @@ function App() {
         const r = await store.get(STORAGE_KEY);
         if (r && r.value) {
           const parsed = JSON.parse(r.value);
-          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
+          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
           fromStore = true;
         }
       } catch (e) { /* nothing stored */ }
       /* embedded default dataset: used whenever nothing is saved in this
          browser (e.g. Google Sites). Saved data always wins over it. */
       if (!fromStore && typeof window !== "undefined" && window.MPLR_DEFAULT_DATA) {
-        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...window.MPLR_DEFAULT_DATA });
+        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...window.MPLR_DEFAULT_DATA });
       }
       setLoaded(true);
     })();
@@ -1083,7 +1065,7 @@ function App() {
         const stillPending = (d.kathy || []).some((r) => !r.ai && r.cid && r.tx);
         if (!stillPending) {
           clearInterval(t);
-          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
+          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
         }
       } catch (e) { /* keep trying */ }
     }, 10000);
@@ -1314,22 +1296,6 @@ function App() {
     let normalized = rows.map((r) => normalizeRow(type, r, map)).filter(Boolean);
     if (type === "ads" && normalized.some((r) => r.kind === "ta")) normalized = normalized.filter((r) => r.kind === "ta");
 
-    if (type === "svcmix") {
-      /* services + materials reports combine; items update by name */
-      const kept = [...(working.svcmix || [])];
-      const byName = {};
-      kept.forEach((r, i) => { byName[(r.nm || "").toLowerCase()] = i; });
-      let addedCount = 0, dupes = 0, updated = 0;
-      normalized.forEach((r) => {
-        const k = (r.nm || "").toLowerCase();
-        if (byName[k] !== undefined) {
-          if (JSON.stringify(kept[byName[k]]) !== JSON.stringify(r)) { kept[byName[k]] = r; updated++; } else dupes++;
-        } else { byName[k] = kept.length; kept.push(r); addedCount++; }
-      });
-      working.svcmix = kept;
-      working.settings = { ...(working.settings || {}), svcmixAt: new Date().toISOString().slice(0, 10) };
-      return { added: addedCount, dupes, updated };
-    }
 
     if (type === "invoices") {
       const kept = [...(working.invoices || [])];
@@ -1518,7 +1484,7 @@ function App() {
     reader.onload = (e) => {
       try {
         const parsed = JSON.parse(e.target.result);
-        const next = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed };
+        const next = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed };
         persist(next);
         setUploadMsg({ ok: true, text: "Backup restored." });
       } catch (err) { setUploadMsg({ ok: false, text: "That doesn't look like a dashboard backup file." }); }
@@ -1662,7 +1628,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 46</div>
+            <div className="sub">KPI Dashboard · build 47</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1739,61 +1705,24 @@ function App() {
                 </div>
               ))}
 
-              {(data.svcmix || []).length > 0 && (
-                <div className="panel" style={{ marginTop: 20 }}>
-                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Price-book service mix</h2><small>HCP's services report{(data.settings || {}).svcmixAt ? ` (uploaded ${data.settings.svcmixAt})` : ""}: trailing-365 totals for PRICE-BOOK items only. Custom-typed invoice lines (most of your repair billing) are invisible to this report, so treat the panel below as the source of truth for dollars.</small></div>
-                  {(() => {
-                    const cats = {};
-                    (data.svcmix || []).forEach((it) => {
-                      const c = /unassigned/.test((it.nm || "").toLowerCase()) ? "No price book item" : jobCategory(it.nm, it.rev);
-                      if (!cats[c]) cats[c] = { rev: 0, qty: 0, items: [] };
-                      cats[c].rev += it.rev; cats[c].qty += it.qty; cats[c].items.push(it);
-                    });
-                    const entries = Object.entries(cats).sort((a, b) => b[1].rev - a[1].rev);
-                    const total = entries.reduce((a, [, p]) => a + p.rev, 0);
-                    const gb = cats["Go-Backs (free returns)"];
-                    const detQty = (cats["Leak Detection"] || {}).qty || 0;
-                    const cpvMix = parseNum((data.settings || {}).costPerVisit) || 0;
-                    const gbNote = gb && gb.qty > 0 ? (
-                      <p className="note" key="gbnote" style={{ marginBottom: 8 }}>
-                        <b style={{ color: C.ink }}>{gb.qty} free return visits</b> in the period{detQty ? ` (≈${Math.round((gb.qty / detQty) * 100)}% of paid detections needed a go-back)` : ""}.
-                        {cpvMix > 0 ? <> At your ${cpvMix}/visit cost, that's <b style={{ color: C.red }}>≈${Math.round(gb.qty * cpvMix).toLocaleString()}</b> of unbilled truck rolls: the hidden cost of the detection line.</> : " Set the cost-per-visit in the profit model below to see what these cost you."}
-                      </p>
-                    ) : null;
-                    return [gbNote, ...entries.map(([c, p]) => {
-                      const key = "mix-" + c;
-                      const isOpen = openEstRow === key;
-                      return (
-                        <div key={c} style={{ borderBottom: `1px solid ${C.line}` }}>
-                          <div className="srcrow" style={{ cursor: "pointer", borderBottom: "none" }} onClick={() => setOpenEstRow(isOpen ? null : key)}>
-                            <span style={{ fontWeight: 600, minWidth: 180 }}>{c}</span>
-                            <span className="note">{p.qty.toLocaleString()} sold</span>
-                            <span style={{ fontWeight: 800, color: C.ink }}>${Math.round(p.rev).toLocaleString()}</span>
-                            <span style={{ marginLeft: "auto", color: C.goldSoft, fontWeight: 600 }}>{total ? ((p.rev / total) * 100).toFixed(1) : 0}%</span>
-                            <span className="note" style={{ width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
-                          </div>
-                          {isOpen && (
-                            <div style={{ padding: "0 6px 12px", fontSize: 13 }}>
-                              {p.items.slice().sort((a, b) => b.rev - a.rev).map((it, i) => (
-                                <div key={i} className="srcrow" style={{ borderBottom: i === p.items.length - 1 ? "none" : undefined }}>
-                                  <span className="note" style={{ flex: "1 1 240px" }}>{it.nm}</span>
-                                  <span className="note">{it.qty}×</span>
-                                  <span style={{ fontWeight: 700 }}>${Math.round(it.rev).toLocaleString()}</span>
-                                </div>
-                              ))}
-                              {c === "No price book item" && <p className="note" style={{ marginTop: 6 }}>Invoices billed without a price-book item: unclassifiable at the source. Worth an office rule: always bill from the price book.</p>}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })];
-                  })()}
-                </div>
-              )}
-
               {Object.keys(cur.catPerf || {}).length > 0 && (
                 <div className="panel" style={{ marginTop: 20 }}>
                   <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Sales by service type</h2><small>{cur.catSource === "invoices" ? "revenue = dollars actually collected on invoices paid in this date range, categorized by each invoice\u2019s job description" : "paid jobs from the jobs export, categorized by description"}</small></div>
+                  {cur.catSource !== "invoices" && (
+                    <p className="note" style={{ color: C.yellow, fontWeight: 600, marginBottom: 8 }}>
+                      ⚠ Running on the jobs-export fallback. Upload the HCP invoices export (Invoice #, Amount due, Payment date, Job #) and this panel switches to collected-dollar accuracy automatically.
+                    </p>
+                  )}
+                  {cur.catSource === "invoices" && (() => {
+                    const nd = cur.catPerf["No description"];
+                    const tot = Object.values(cur.catPerf).reduce((a, p) => a + p.revenue, 0);
+                    if (!nd || !tot || nd.revenue / tot < 0.25) return null;
+                    return (
+                      <p className="note" style={{ color: C.red, fontWeight: 600, marginBottom: 8 }}>
+                        ⚠ ${Math.round(nd.revenue).toLocaleString()} ({Math.round((nd.revenue / tot) * 100)}%) of collected dollars can't be categorized: their jobs have no description on file here. Upload the FULL all-time jobs export WITH the Job description column; the upload message will confirm "Descriptions captured".
+                      </p>
+                    );
+                  })()}
                   {(() => {
                     const entries = Object.entries(cur.catPerf).sort((a, b) => b[1].revenue - a[1].revenue);
                     const totalRev = entries.reduce((a, [, p]) => a + p.revenue, 0);
@@ -2245,7 +2174,7 @@ function App() {
                         const j = await r.json();
                         if (!r.ok) { setUploadMsg({ ok: false, text: j.error || "AI grading failed" }); return; }
                         const d = await fetch("/api/data").then((x) => x.json());
-                        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
+                        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
                         setUploadMsg({ ok: true, text: `AI graded ${j.graded || 0} calls${j.changed ? ` · ${j.changed} verdicts changed` : ""}.` });
                       } catch (e) { setUploadMsg({ ok: false, text: "AI grading failed: " + e.message }); }
                     }}>Grade {pending} now</button>
