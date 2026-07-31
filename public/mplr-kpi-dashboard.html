@@ -788,11 +788,12 @@ function computeStats(data, range, numFilter, manual) {
   (data.lineitems || []).forEach((li) => { if (li.jid) (liIdx[li.jid] = liIdx[li.jid] || []).push(li); });
   const catPerf = {};
   let liJobs = 0;
-  const bumpCat = (c, rev, isJob, svc) => {
-    if (!catPerf[c]) catPerf[c] = { jobs: 0, revenue: 0, svc: 0, svcJobs: 0 };
+  const bumpCat = (c, rev, isJob, svc, jref) => {
+    if (!catPerf[c]) catPerf[c] = { jobs: 0, revenue: 0, svc: 0, svcJobs: 0, members: [] };
     if (isJob) catPerf[c].jobs++;
     catPerf[c].revenue += rev;
     if (isJob && svc) { catPerf[c].svc += svc; catPerf[c].svcJobs++; }
+    if (isJob && jref) catPerf[c].members.push(jref);
   };
   revenueJobs.forEach((j) => {
     const jobRev = j.paidAmt != null ? j.paidAmt : j.amt;
@@ -807,9 +808,9 @@ function computeStats(data, range, numFilter, manual) {
         perCat[c] = (perCat[c] || 0) + li.amt * factor;
       });
       const dominant = Object.entries(perCat).sort((a, b) => b[1] - a[1])[0][0];
-      Object.entries(perCat).forEach(([c, rev]) => bumpCat(c, rev, c === dominant, c === dominant ? j.svc : 0));
+      Object.entries(perCat).forEach(([c, rev]) => bumpCat(c, rev, c === dominant, c === dominant ? j.svc : 0, c === dominant ? j : null));
     } else {
-      bumpCat(jobCategory(j.jd, j.amt), jobRev, true, j.svc);
+      bumpCat(jobCategory(j.jd, j.amt), jobRev, true, j.svc, j);
     }
   });
 
@@ -1457,9 +1458,18 @@ function App() {
       const res = applyImport(working, type, table.rows, map);
       working.mapMemory[mapKey(type, table.headers)] = map;
       added += res.added; dupes += res.dupes; updatedCount += res.updated || 0; imported++;
+      if (type === "jobs") {
+        if (!map.desc) {
+          jobsDescNote = `⚠ ${file.name} has NO "Job description" column, so Sales by service type cannot categorize from it. In HCP, edit the jobs export to include Job description, then re-export and re-upload.`;
+        } else {
+          const withDesc = (working.jobs || []).filter((j) => j.jd).length;
+          jobsDescNote = `Descriptions captured: ${withDesc.toLocaleString()} of ${(working.jobs || []).length.toLocaleString()} stored jobs now have one.`;
+        }
+      }
     }
     if (imported) persist(working);
     const parts = [];
+    if (jobsDescNote) parts.push(jobsDescNote);
     if (imported) parts.push(`${imported} file${imported === 1 ? "" : "s"} imported: ${added.toLocaleString()} new rows${updatedCount ? `, ${updatedCount.toLocaleString()} jobs updated` : ""}, ${dupes.toLocaleString()} duplicates skipped.`);
     if (unreadable) parts.push(`${unreadable} file(s) couldn't be read (export as CSV or XLSX).`);
     if (needsMapping.length) parts.push(`${needsMapping.length} file(s) need a one-time column mapping below.`);
@@ -1642,7 +1652,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 41</div>
+            <div className="sub">KPI Dashboard · build 42</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1734,18 +1744,37 @@ function App() {
                           const tripShare = totalJobs ? (p.jobs / totalJobs) * 100 : 0;
                           const revShare = totalRev ? (p.revenue / totalRev) * 100 : 0;
                           const profit = cpv > 0 ? p.revenue - p.jobs * cpv : null;
+                          const key = "cat-" + c;
+                          const isOpen = openEstRow === key;
+                          const members = (p.members || []).slice().sort((a, b) => (b.paidAmt != null ? b.paidAmt : b.amt) - (a.paidAmt != null ? a.paidAmt : a.amt));
                           return (
-                            <div className="srcrow" key={c} style={{ flexWrap: "wrap" }}>
-                              <span style={{ fontWeight: 600, minWidth: 170 }}>{c}</span>
-                              <span className="note">{p.jobs} job{p.jobs === 1 ? "" : "s"} ({tripShare.toFixed(0)}% of trips)</span>
-                              <span style={{ fontWeight: 800, color: C.ink }}>${Math.round(p.revenue).toLocaleString()}</span>
-                              <span className="note">avg ${Math.round(p.revenue / Math.max(1, p.jobs)).toLocaleString()}</span>
-                              {profit != null && (
-                                <span style={{ fontWeight: 800, color: profit >= 0 ? C.green : C.red }}>
-                                  {profit >= 0 ? "+" : "−"}${Math.abs(Math.round(profit)).toLocaleString()} est. profit
-                                </span>
+                            <div key={c} style={{ borderBottom: `1px solid ${C.line}` }}>
+                              <div className="srcrow" style={{ flexWrap: "wrap", cursor: "pointer", borderBottom: "none" }} onClick={() => setOpenEstRow(isOpen ? null : key)}>
+                                <span style={{ fontWeight: 600, minWidth: 170 }}>{c}</span>
+                                <span className="note">{p.jobs} job{p.jobs === 1 ? "" : "s"} ({tripShare.toFixed(0)}% of trips)</span>
+                                <span style={{ fontWeight: 800, color: C.ink }}>${Math.round(p.revenue).toLocaleString()}</span>
+                                <span className="note">avg ${Math.round(p.revenue / Math.max(1, p.jobs)).toLocaleString()}</span>
+                                {profit != null && (
+                                  <span style={{ fontWeight: 800, color: profit >= 0 ? C.green : C.red }}>
+                                    {profit >= 0 ? "+" : "−"}${Math.abs(Math.round(profit)).toLocaleString()} est. profit
+                                  </span>
+                                )}
+                                <span style={{ marginLeft: "auto", color: C.goldSoft, fontWeight: 600 }}>{revShare.toFixed(1)}%</span>
+                                <span className="note" style={{ width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
+                              </div>
+                              {isOpen && (
+                                <div style={{ padding: "0 6px 12px", fontSize: 13 }}>
+                                  {members.slice(0, 15).map((j, i) => (
+                                    <div key={i} className="srcrow" style={{ borderBottom: i === Math.min(members.length, 15) - 1 ? "none" : undefined }}>
+                                      <span className="note" style={{ minWidth: 78 }}>{j.d}</span>
+                                      <span className="note">#{j.jid || "—"}</span>
+                                      <span style={{ fontWeight: 700 }}>${Math.round(j.paidAmt != null ? j.paidAmt : j.amt).toLocaleString()}</span>
+                                      <span className="note" style={{ flex: "1 1 200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{j.jd || "(no description in HCP)"}</span>
+                                    </div>
+                                  ))}
+                                  {members.length > 15 && <p className="note" style={{ marginTop: 6 }}>+ {members.length - 15} more in this category</p>}
+                                </div>
                               )}
-                              <span style={{ marginLeft: "auto", color: C.goldSoft, fontWeight: 600 }}>{revShare.toFixed(1)}%</span>
                             </div>
                           );
                         })}
