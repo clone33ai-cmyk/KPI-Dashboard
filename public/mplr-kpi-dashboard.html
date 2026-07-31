@@ -189,6 +189,15 @@ const SOURCES = {
       { id: "notes", label: "Notes", required: false, match: ["notes"] },
     ],
   },
+  lineitems: {
+    label: "Housecall Pro — Invoice line items",
+    tip: "One row per line item (Job #, item name, item amount). Makes Sales by service type exact: mixed invoices split revenue across categories instead of lumping under one description.",
+    fields: [
+      { id: "jid", label: "Job / Invoice #", required: true, match: ["job #", "job number", "invoice #", "invoice number", "job"] },
+      { id: "name", label: "Line item name", required: true, match: ["line item", "item name", "item", "name", "description", "service"] },
+      { id: "amount", label: "Line item amount", required: true, match: ["amount", "line total", "total", "price", "subtotal"] },
+    ],
+  },
   kathy: {
     label: "Spam Kathy — Call transcripts export",
     tip: "Retell export with transcripts. Feeds the Spam Kathy audit tab: correct transfers, missed real callers, failed transfers, spam blocked and passed.",
@@ -381,8 +390,8 @@ function normalizeRow(type, raw, map) {
   }
 
   const date = parseDate(get("date"));
-  if (!date) return null;
-  const base = { d: dkey(date) };
+  if (!date && type !== "lineitems") return null;
+  const base = { d: date ? dkey(date) : "1970-01-01" };
 
   if (type === "calls") {
     const st = lc(get("status"));
@@ -419,6 +428,13 @@ function normalizeRow(type, raw, map) {
     const ch = lc(get("charged"));
     base.charged = ch === "" ? true : /charg|yes|true|billable/.test(ch) && !/not|un|refund|credit/.test(ch);
     base.ph = normPhone(get("phone"));
+  }
+  if (type === "lineitems") {
+    const liJid = String(get("jid") || "").replace(/\D/g, "");
+    if (!liJid) return null;
+    base.jid = liJid;
+    base.nm = String(get("name") || "").trim().slice(0, 90);
+    base.amt = parseNum(get("amount")) || 0;
   }
   if (type === "kathy") {
     const tx = String(get("transcript") || "");
@@ -729,18 +745,40 @@ function computeStats(data, range, numFilter, manual) {
     else { wkdayTot++; if (c.answered) wkdayAns++; }
   });
 
-  /* sales by service type: paid jobs in range, categorized by description */
+  /* sales by service type. Line-item precision when items exist for a job;
+     description fallback otherwise. Splits scale to collected dollars. */
+  const liIdx = {};
+  (data.lineitems || []).forEach((li) => { if (li.jid) (liIdx[li.jid] = liIdx[li.jid] || []).push(li); });
   const catPerf = {};
-  revenueJobs.forEach((j) => {
-    const c = jobCategory(j.jd, j.amt);
+  let liJobs = 0;
+  const bumpCat = (c, rev, isJob) => {
     if (!catPerf[c]) catPerf[c] = { jobs: 0, revenue: 0 };
-    catPerf[c].jobs++;
-    catPerf[c].revenue += j.paidAmt != null ? j.paidAmt : j.amt;
+    if (isJob) catPerf[c].jobs++;
+    catPerf[c].revenue += rev;
+  };
+  revenueJobs.forEach((j) => {
+    const jobRev = j.paidAmt != null ? j.paidAmt : j.amt;
+    const items = j.jid ? liIdx[j.jid] : null;
+    const itemsTotal = items ? items.reduce((a, li) => a + (li.amt || 0), 0) : 0;
+    if (items && itemsTotal > 0) {
+      liJobs++;
+      const factor = jobRev / itemsTotal;
+      const perCat = {};
+      items.forEach((li) => {
+        const c = jobCategory(li.nm, li.amt);
+        perCat[c] = (perCat[c] || 0) + li.amt * factor;
+      });
+      const dominant = Object.entries(perCat).sort((a, b) => b[1] - a[1])[0][0];
+      Object.entries(perCat).forEach(([c, rev]) => bumpCat(c, rev, c === dominant));
+    } else {
+      bumpCat(jobCategory(j.jd, j.amt), jobRev, true);
+    }
   });
 
   return {
     srcPerf,
     catPerf,
+    catLiJobs: liJobs,
     missedOps,
     split: { wkdayTot, wkdayAns, wkendTot, wkendAns },
     counts: {
@@ -826,7 +864,7 @@ const fmtVal = (m, v) => {
 /* ================================================================ */
 
 function App() {
-  const [data, setData] = useState({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {} });
+  const [data, setData] = useState({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {} });
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("overview");
   const [preset, setPreset] = useState("mtd");
@@ -849,7 +887,7 @@ function App() {
     empty: { label: "No data", color: C.gray },
     manual: { label: "Manual", color: C.gray },
   };
-  const fileRefs = { calls: useRef(), jobs: useRef(), ads: useRef(), lsa: useRef(), lsabill: useRef(), estimates: useRef(), kathy: useRef() };
+  const fileRefs = { calls: useRef(), jobs: useRef(), ads: useRef(), lsa: useRef(), lsabill: useRef(), estimates: useRef(), kathy: useRef(), lineitems: useRef() };
   const backupRef = useRef();
 
   useEffect(() => {
@@ -859,14 +897,14 @@ function App() {
         const r = await store.get(STORAGE_KEY);
         if (r && r.value) {
           const parsed = JSON.parse(r.value);
-          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
+          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
           fromStore = true;
         }
       } catch (e) { /* nothing stored */ }
       /* embedded default dataset: used whenever nothing is saved in this
          browser (e.g. Google Sites). Saved data always wins over it. */
       if (!fromStore && typeof window !== "undefined" && window.MPLR_DEFAULT_DATA) {
-        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...window.MPLR_DEFAULT_DATA });
+        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...window.MPLR_DEFAULT_DATA });
       }
       setLoaded(true);
     })();
@@ -1002,7 +1040,7 @@ function App() {
         const stillPending = (d.kathy || []).some((r) => !r.ai && r.cid && r.tx);
         if (!stillPending) {
           clearInterval(t);
-          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
+          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
         }
       } catch (e) { /* keep trying */ }
     }, 10000);
@@ -1215,6 +1253,18 @@ function App() {
     let normalized = rows.map((r) => normalizeRow(type, r, map)).filter(Boolean);
     if (type === "ads" && normalized.some((r) => r.kind === "ta")) normalized = normalized.filter((r) => r.kind === "ta");
 
+    if (type === "lineitems") {
+      const kept = [...(working.lineitems || [])];
+      const seen = new Set(kept.map((r) => JSON.stringify(r)));
+      let addedCount = 0, dupes = 0;
+      normalized.forEach((r) => {
+        const k = JSON.stringify(r);
+        if (seen.has(k)) dupes++; else { seen.add(k); kept.push(r); addedCount++; }
+      });
+      working.lineitems = kept;
+      return { added: addedCount, dupes, updated: 0 };
+    }
+
     if (type === "kathy") {
       const kept = [...(working.kathy || [])];
       const byId = {};
@@ -1368,7 +1418,7 @@ function App() {
     reader.onload = (e) => {
       try {
         const parsed = JSON.parse(e.target.result);
-        const next = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed };
+        const next = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed };
         persist(next);
         setUploadMsg({ ok: true, text: "Backup restored." });
       } catch (err) { setUploadMsg({ ok: false, text: "That doesn't look like a dashboard backup file." }); }
@@ -1512,7 +1562,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 37</div>
+            <div className="sub">KPI Dashboard · build 38</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1591,7 +1641,7 @@ function App() {
 
               {Object.keys(cur.catPerf || {}).length > 0 && (
                 <div className="panel" style={{ marginTop: 20 }}>
-                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Sales by service type</h2><small>paid jobs in this range, categorized from job descriptions</small></div>
+                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Sales by service type</h2><small>{cur.catLiJobs ? `line-item precision on ${cur.catLiJobs} of ${cur.counts.jobs} paid jobs; descriptions for the rest` : "categorized from job descriptions — upload invoice line items for exact splits on mixed invoices"}</small></div>
                   {(() => {
                     const entries = Object.entries(cur.catPerf).sort((a, b) => b[1].revenue - a[1].revenue);
                     const totalRev = entries.reduce((a, [, p]) => a + p.revenue, 0);
@@ -1941,7 +1991,7 @@ function App() {
                         const j = await r.json();
                         if (!r.ok) { setUploadMsg({ ok: false, text: j.error || "AI grading failed" }); return; }
                         const d = await fetch("/api/data").then((x) => x.json());
-                        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
+                        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
                         setUploadMsg({ ok: true, text: `AI graded ${j.graded || 0} calls${j.changed ? ` · ${j.changed} verdicts changed` : ""}.` });
                       } catch (e) { setUploadMsg({ ok: false, text: "AI grading failed: " + e.message }); }
                     }}>Grade {pending} now</button>
