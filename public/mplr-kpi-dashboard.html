@@ -985,11 +985,19 @@ function App() {
   /* phone comes ONLY from the estimate's own row (the export's phone
      column) — never inferred from names, which collide */
   const estPhone = (e) => e.ph || "";
-  const logCall = (eid) => {
+  const logTouch = (eid, kind) => {
     if (!eid) return;
     const f = { ...(data.followups || {}) };
-    const curF = f[eid] || { n: 0 };
-    f[eid] = { n: curF.n + 1, last: dkey(new Date()) };
+    const curF = f[eid] || { n: 0, t: 0 };
+    f[eid] = { ...curF, [kind]: (curF[kind] || 0) + 1, last: dkey(new Date()) };
+    persist({ ...data, followups: f });
+  };
+  const logCall = (eid) => logTouch(eid, "n");
+  const logText = (eid) => logTouch(eid, "t");
+  const saveEstNote = (eid, note) => {
+    if (!eid) return;
+    const f = { ...(data.followups || {}) };
+    f[eid] = { ...(f[eid] || { n: 0, t: 0 }), note };
     persist({ ...data, followups: f });
   };
 
@@ -1012,7 +1020,7 @@ function App() {
     open.forEach((e) => { if (e.age <= 7) buckets.fresh++; else if (e.age <= 30) buckets.warm++; else buckets.stale++; });
     const phMissing = est.length > 0 && est.every((e) => !e.ph);
     const amtMissing = est.length > 0 && est.every((e) => !e.amt);
-    return { open: open.sort((a, b) => b.age - a.age), totalVal, buckets, total: est.length, dead, phMissing, amtMissing };
+    return { open: open.sort((a, b) => a.age - b.age), totalVal, buckets, total: est.length, dead, phMissing, amtMissing };
   }, [data.estimates, dataIdx]);
 
   /* ---------- insights & recommendations (computed from the data) ---------- */
@@ -1470,7 +1478,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 35</div>
+            <div className="sub">KPI Dashboard · build 36</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1600,12 +1608,12 @@ function App() {
                 return (
                   <div className="panel" style={{ marginTop: 20 }}>
                     <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>What those missed calls cost</h2><small>estimated from this range's own numbers</small></div>
-                    <div className="val" style={{ fontSize: 38, margin: "8px 0 2px" }}>{money(est)}</div>
+                    <div className="val" style={{ fontSize: 40, margin: "8px 0 2px", fontWeight: 800, color: C.ink }}>{money(est)}</div>
                     <p className="note" style={{ marginBottom: 10 }}>estimated revenue missed because these callers never got picked up</p>
                     <div className="srcrow"><span className="note" style={{ minWidth: 200 }}>Lost callers (list above)</span><span style={{ fontWeight: 600 }}>{n}</span></div>
                     <div className="srcrow"><span className="note" style={{ minWidth: 200 }}>× booking rate of answered leads</span><span style={{ fontWeight: 600 }}>{convPct.toFixed(1)}%</span></div>
                     <div className="srcrow"><span className="note" style={{ minWidth: 200 }}>× average job value (paid)</span><span style={{ fontWeight: 600 }}>{money(ticket)}</span></div>
-                    <div className="srcrow"><span className="note" style={{ minWidth: 200 }}>= per lost caller</span><span style={{ fontWeight: 600, color: C.goldSoft }}>{money(perCaller)}</span></div>
+                    <div className="srcrow"><span className="note" style={{ minWidth: 200 }}>= per lost caller</span><span style={{ fontWeight: 800, color: C.ink }}>{money(perCaller)}</span></div>
                     {(() => {
                       const bySeg = {};
                       cur.missedOps.forEach((m) => { bySeg[m.src] = (bySeg[m.src] || 0) + 1; });
@@ -1621,7 +1629,7 @@ function App() {
                               <div className="srcrow" key={s}>
                                 <span style={{ fontWeight: 600, minWidth: 130 }}>{s}</span>
                                 <span className="note">{c} caller{c === 1 ? "" : "s"}</span>
-                                <span className="note">{money(c * perCaller)} missed revenue</span>
+                                <span style={{ fontWeight: 800, color: C.ink }}>{money(c * perCaller)} missed revenue</span>
                                 <span style={{ marginLeft: "auto", fontWeight: 600, color: cpl ? C.red : C.gray }}>
                                   {cpl ? `${money(c * cpl)} spend wasted (at ${money(cpl)}/lead)` : s === "Google Ads" || s === "LSA" ? "no spend data for range" : "free lead"}
                                 </span>
@@ -1674,7 +1682,7 @@ function App() {
                                 <span style={{ fontWeight: 600, minWidth: 140 }}>{e.nm || "—"}</span>
                                 <span className="note">{e.d}</span>
                                 <span className="note">{e.amt ? `$${Math.round(e.amt).toLocaleString()}` : ""}</span>
-                                {fp && <span className="pill" style={{ background: C.gold, color: C.onGold }}>Called {fp.n}×</span>}
+                                {fp && (fp.n || fp.t) ? <span className="pill" style={{ background: C.gold, color: C.onGold }}>{[fp.n ? `Called ${fp.n}×` : null, fp.t ? `Texted ${fp.t}×` : null].filter(Boolean).join(" · ")}</span> : null}
                                 <span className="note" style={{ marginLeft: "auto", width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
                               </div>
                               {isOpen && (
@@ -1682,7 +1690,8 @@ function App() {
                                   {ph && <div><span className="note">Phone:</span> <b>{fmtPhone(ph)}</b></div>}
                                   {e.desc && <div><span className="note">Work:</span> {e.desc}</div>}
                                   {e.addr && <div><span className="note">Address:</span> {e.addr}</div>}
-                                  {fp && <div><span className="note">Follow-ups:</span> called {fp.n}×, last {fp.last}</div>}
+                                  {fp && <div><span className="note">Follow-ups:</span> {[fp.n ? `called ${fp.n}×` : null, fp.t ? `texted ${fp.t}×` : null].filter(Boolean).join(", ")}{fp.last ? `, last ${fp.last}` : ""}</div>}
+                                  {fp && fp.note && <div><span className="note">CSR notes:</span> {fp.note}</div>}
                                 </div>
                               )}
                             </div>
@@ -1728,7 +1737,7 @@ function App() {
                                     <span style={{ fontWeight: 600, minWidth: 140 }}>{e.nm || fmtPhone(estPhone(e))}</span>
                                     <span className="note">{estPhone(e) ? fmtPhone(estPhone(e)) : "no phone yet"}</span>
                                     <span className="note">{e.amt ? `$${Math.round(e.amt).toLocaleString()}` : ""}</span>
-                                    {(data.followups || {})[e.eid] && <span className="pill" style={{ background: C.gold, color: C.onGold }}>Called {(data.followups || {})[e.eid].n}×</span>}
+                                    {(() => { const fp = (data.followups || {})[e.eid]; return fp && (fp.n || fp.t) ? <span className="pill" style={{ background: C.gold, color: C.onGold }}>{[fp.n ? `Called ${fp.n}×` : null, fp.t ? `Texted ${fp.t}×` : null].filter(Boolean).join(" · ")}</span> : null; })()}
                                     <span style={{ marginLeft: "auto", fontWeight: 600, color: e.age > 30 ? C.red : e.age > 7 ? C.yellow : C.green }}>{e.age}d old</span>
                                     <span className="note" style={{ width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
                                   </div>
@@ -1739,14 +1748,32 @@ function App() {
                                       {e.addr && <div><span className="note">Address:</span> {e.addr}</div>}
                                       {e.notes && <div><span className="note">Notes:</span> {e.notes}</div>}
                                       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
-                                        {estPhone(e) && <a href={"tel:" + estPhone(e)} className="btn" style={{ display: "inline-block", padding: "7px 16px", textDecoration: "none" }}>Call {fmtPhone(estPhone(e))}</a>}
+                                        {estPhone(e) && <a href={"tel:" + estPhone(e)} className="btn" style={{ display: "inline-block", padding: "7px 16px", textDecoration: "none" }}>Call</a>}
+                                        {estPhone(e) && <a href={"sms:" + estPhone(e)} className="btn" style={{ display: "inline-block", padding: "7px 16px", textDecoration: "none" }}>SMS</a>}
                                         {e.eid && (
                                           <button className="btn ghost" style={{ padding: "7px 16px" }} onClick={(ev) => { ev.stopPropagation(); logCall(e.eid); }}>
-                                            {(data.followups || {})[e.eid] ? `Called ${(data.followups || {})[e.eid].n}× — log another` : "Called — log it"}
+                                            {((data.followups || {})[e.eid] || {}).n ? `Called ${(data.followups || {})[e.eid].n}× — log another` : "Called — log it"}
+                                          </button>
+                                        )}
+                                        {e.eid && (
+                                          <button className="btn ghost" style={{ padding: "7px 16px" }} onClick={(ev) => { ev.stopPropagation(); logText(e.eid); }}>
+                                            {((data.followups || {})[e.eid] || {}).t ? `Texted ${(data.followups || {})[e.eid].t}× — log another` : "Texted — log it"}
                                           </button>
                                         )}
                                       </div>
-                                      {(data.followups || {})[e.eid] && <div className="note">Last follow-up: {(data.followups || {})[e.eid].last}</div>}
+                                      {(data.followups || {})[e.eid] && (data.followups || {})[e.eid].last && <div className="note">Last follow-up: {(data.followups || {})[e.eid].last}</div>}
+                                      {e.eid && (
+                                        <div style={{ marginTop: 6 }}>
+                                          <textarea
+                                            placeholder="CSR notes: what did they say? when to try again?"
+                                            defaultValue={((data.followups || {})[e.eid] || {}).note || ""}
+                                            onClick={(ev) => ev.stopPropagation()}
+                                            onBlur={(ev) => { const v = ev.target.value.trim(); if (v !== (((data.followups || {})[e.eid] || {}).note || "")) saveEstNote(e.eid, v); }}
+                                            style={{ width: "100%", minHeight: 56, background: C.navy3, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 6, padding: 8, font: "inherit", fontSize: 13 }}
+                                          />
+                                          <div className="note" style={{ fontSize: 11.5 }}>saves automatically when you click away · visible to everyone</div>
+                                        </div>
+                                      )}
                                       {!estPhone(e) && <div className="note">No phone: add the Customer mobile number column to the HCP estimates export and re-upload, and every estimate gets a direct number.</div>}
                                       {!e.desc && !e.addr && !e.notes && <div className="note">No description, address, or notes captured yet: re-upload the estimates export once and these fill in.</div>}
                                     </div>
