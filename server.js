@@ -20,6 +20,7 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const DATA_FILE = path.join(DATA_DIR, "mplr-kpi-data.json");
 
+const SERVER_BUILD = 55;
 app.use(express.json({ limit: "100mb" }));
 
 /* ---------------- basic auth ---------------- */
@@ -132,7 +133,7 @@ app.post("/api/data", (req, res) => {
 });
 app.get("/api/health", (req, res) => {
   const d = loadData();
-  res.json({ ok: true, lastUpdated: d.meta.lastUpdated || null, aiGrading: !!process.env.ANTHROPIC_API_KEY, pendingAiGrades: d.kathy.filter((r) => !r.ai && r.cid && r.tx).length, kathyAiError: d.meta.kathyAiError || null });
+  res.json({ ok: true, serverBuild: SERVER_BUILD, uploadLimit: "100mb", lastUpdated: d.meta.lastUpdated || null, aiGrading: !!process.env.ANTHROPIC_API_KEY, pendingAiGrades: d.kathy.filter((r) => !r.ai && r.cid && r.tx).length, kathyAiError: d.meta.kathyAiError || null });
 });
 
 app.use(express.static(path.join(__dirname, "public")));
