@@ -190,6 +190,16 @@ const SOURCES = {
       { id: "notes", label: "Notes", required: false, match: ["notes"] },
     ],
   },
+  svcmix: {
+    label: "Housecall Pro — Services on jobs report (Reporting → Jobs)",
+    tip: "HCP's own line-item totals: one row per service item with quantity and gross revenue. Exact category splits with zero guessing. Re-upload any time; each upload replaces the last snapshot.",
+    fields: [
+      { id: "name", label: "Service item name", required: true, match: ["service item name", "service item", "item name", "service"] },
+      { id: "revenue", label: "Gross revenue", required: true, match: ["gross revenue", "revenue"] },
+      { id: "qty", label: "Total quantity", required: false, match: ["total quantity", "quantity", "qty"] },
+      { id: "jcount", label: "Job count", required: false, match: ["job count", "jobs"] },
+    ],
+  },
   invoices: {
     label: "Housecall Pro — Invoices export",
     tip: "Powers the Outstanding Invoices panel: open balances, aging, and a collections list with phones. Needs Invoice # and Amount due; status, dates, name, phone make it complete.",
@@ -296,13 +306,13 @@ function jobCategory(desc, amt) {
   if (/pump|filter|heater|motor|salt cell|actuator|booster|automation|equipment (repair|install|replace)/.test(s)) return "Equipment";
   if (/pipe repair|under the dirt|underground|excavat|re-?route|skimmer/.test(s)) return "Pipe/Skimmer Repair";
   if (/structural|pier|crack|epoxy|injection/.test(s)) return "Structural";
-  if (/plaster|resurfac|pebble/.test(s)) return "Plaster/Resurface";
+  if (/plaster|resurfac|pebble|fiberglass|gel ?coat/.test(s)) return "Plaster/Resurface";
   if (/remodel/.test(s)) return "Remodel";
   if (/tile|coping/.test(s)) return "Tile & Coping";
-  if (/\bdeck/.test(s)) return "Deck";
+  if (/\bdeck|deco ?seal/.test(s)) return "Deck";
   if (/light/.test(s)) return "Lighting";
   if (/ld notes|leak repair|3 year no leak/.test(s)) return "Leak Repair";
-  if (/leak detect|detection|leak diagnosis|go back/.test(s)) return "Leak Detection";
+  if (/leak detect|detection|leak diagnosis|go back|water feature test/.test(s)) return "Leak Detection";
   if (/\*|notas|check notes|check pickup|pick ?up check|ayudar|fotos?\b/.test(s)) return "Internal/Tasks";
   if (/\brepair/.test(s)) return "Leak Repair";
   if (amt >= 370 && amt <= 380) return "Leak Detection";
@@ -407,7 +417,7 @@ function normalizeRow(type, raw, map) {
   }
 
   const date = parseDate(get("date"));
-  if (!date && type !== "lineitems" && type !== "invoices") return null;
+  if (!date && type !== "lineitems" && type !== "invoices" && type !== "svcmix") return null;
   const base = { d: date ? dkey(date) : "1970-01-01" };
 
   if (type === "calls") {
@@ -447,6 +457,14 @@ function normalizeRow(type, raw, map) {
     const ch = lc(get("charged"));
     base.charged = ch === "" ? true : /charg|yes|true|billable/.test(ch) && !/not|un|refund|credit/.test(ch);
     base.ph = normPhone(get("phone"));
+  }
+  if (type === "svcmix") {
+    const snm = String(get("name") || "").trim();
+    if (!snm || snm.toLowerCase() === "total") return null; /* skip the report's Total row */
+    base.nm = snm.slice(0, 90);
+    base.rev = parseNum(get("revenue")) || 0;
+    base.qty = Math.round(parseNum(get("qty")) || 0);
+    base.jc = Math.round(parseNum(get("jcount")) || 0);
   }
   if (type === "invoices") {
     const iid = String(get("iid") || "").replace(/\D/g, "");
@@ -903,7 +921,7 @@ const fmtVal = (m, v) => {
 /* ================================================================ */
 
 function App() {
-  const [data, setData] = useState({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {} });
+  const [data, setData] = useState({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {} });
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("overview");
   const [preset, setPreset] = useState("mtd");
@@ -926,7 +944,7 @@ function App() {
     empty: { label: "No data", color: C.gray },
     manual: { label: "Manual", color: C.gray },
   };
-  const fileRefs = { calls: useRef(), jobs: useRef(), ads: useRef(), lsa: useRef(), lsabill: useRef(), estimates: useRef(), kathy: useRef(), lineitems: useRef(), invoices: useRef() };
+  const fileRefs = { calls: useRef(), jobs: useRef(), ads: useRef(), lsa: useRef(), lsabill: useRef(), estimates: useRef(), kathy: useRef(), lineitems: useRef(), invoices: useRef(), svcmix: useRef() };
   const backupRef = useRef();
 
   useEffect(() => {
@@ -936,14 +954,14 @@ function App() {
         const r = await store.get(STORAGE_KEY);
         if (r && r.value) {
           const parsed = JSON.parse(r.value);
-          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
+          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
           fromStore = true;
         }
       } catch (e) { /* nothing stored */ }
       /* embedded default dataset: used whenever nothing is saved in this
          browser (e.g. Google Sites). Saved data always wins over it. */
       if (!fromStore && typeof window !== "undefined" && window.MPLR_DEFAULT_DATA) {
-        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...window.MPLR_DEFAULT_DATA });
+        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...window.MPLR_DEFAULT_DATA });
       }
       setLoaded(true);
     })();
@@ -1079,7 +1097,7 @@ function App() {
         const stillPending = (d.kathy || []).some((r) => !r.ai && r.cid && r.tx);
         if (!stillPending) {
           clearInterval(t);
-          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
+          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
         }
       } catch (e) { /* keep trying */ }
     }, 10000);
@@ -1310,6 +1328,13 @@ function App() {
     let normalized = rows.map((r) => normalizeRow(type, r, map)).filter(Boolean);
     if (type === "ads" && normalized.some((r) => r.kind === "ta")) normalized = normalized.filter((r) => r.kind === "ta");
 
+    if (type === "svcmix") {
+      /* snapshot report: each upload replaces the previous one */
+      working.svcmix = normalized;
+      working.settings = { ...(working.settings || {}), svcmixAt: new Date().toISOString().slice(0, 10) };
+      return { added: normalized.length, dupes: 0, updated: 0 };
+    }
+
     if (type === "invoices") {
       const kept = [...(working.invoices || [])];
       const byId = {};
@@ -1508,7 +1533,7 @@ function App() {
     reader.onload = (e) => {
       try {
         const parsed = JSON.parse(e.target.result);
-        const next = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed };
+        const next = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed };
         persist(next);
         setUploadMsg({ ok: true, text: "Backup restored." });
       } catch (err) { setUploadMsg({ ok: false, text: "That doesn't look like a dashboard backup file." }); }
@@ -1652,7 +1677,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 42</div>
+            <div className="sub">KPI Dashboard · build 43</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1728,6 +1753,49 @@ function App() {
                   <div style={{ marginTop: 6, color: C.goldSoft, fontWeight: 600, fontSize: 13.5 }}>→ {ins.action}</div>
                 </div>
               ))}
+
+              {(data.svcmix || []).length > 0 && (
+                <div className="panel" style={{ marginTop: 20 }}>
+                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Service mix — exact totals</h2><small>from HCP's services report{(data.settings || {}).svcmixAt ? ` uploaded ${data.settings.svcmixAt}` : ""}: trailing-365-day line-item totals, split exactly by HCP itself. Fixed window, not affected by the date filter above.</small></div>
+                  {(() => {
+                    const cats = {};
+                    (data.svcmix || []).forEach((it) => {
+                      const c = /unassigned/.test((it.nm || "").toLowerCase()) ? "No price book item" : jobCategory(it.nm, 0);
+                      if (!cats[c]) cats[c] = { rev: 0, qty: 0, items: [] };
+                      cats[c].rev += it.rev; cats[c].qty += it.qty; cats[c].items.push(it);
+                    });
+                    const entries = Object.entries(cats).sort((a, b) => b[1].rev - a[1].rev);
+                    const total = entries.reduce((a, [, p]) => a + p.rev, 0);
+                    return entries.map(([c, p]) => {
+                      const key = "mix-" + c;
+                      const isOpen = openEstRow === key;
+                      return (
+                        <div key={c} style={{ borderBottom: `1px solid ${C.line}` }}>
+                          <div className="srcrow" style={{ cursor: "pointer", borderBottom: "none" }} onClick={() => setOpenEstRow(isOpen ? null : key)}>
+                            <span style={{ fontWeight: 600, minWidth: 180 }}>{c}</span>
+                            <span className="note">{p.qty.toLocaleString()} sold</span>
+                            <span style={{ fontWeight: 800, color: C.ink }}>${Math.round(p.rev).toLocaleString()}</span>
+                            <span style={{ marginLeft: "auto", color: C.goldSoft, fontWeight: 600 }}>{total ? ((p.rev / total) * 100).toFixed(1) : 0}%</span>
+                            <span className="note" style={{ width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
+                          </div>
+                          {isOpen && (
+                            <div style={{ padding: "0 6px 12px", fontSize: 13 }}>
+                              {p.items.slice().sort((a, b) => b.rev - a.rev).map((it, i) => (
+                                <div key={i} className="srcrow" style={{ borderBottom: i === p.items.length - 1 ? "none" : undefined }}>
+                                  <span className="note" style={{ flex: "1 1 240px" }}>{it.nm}</span>
+                                  <span className="note">{it.qty}×</span>
+                                  <span style={{ fontWeight: 700 }}>${Math.round(it.rev).toLocaleString()}</span>
+                                </div>
+                              ))}
+                              {c === "No price book item" && <p className="note" style={{ marginTop: 6 }}>Invoices billed without a price-book item: unclassifiable at the source. Worth an office rule: always bill from the price book.</p>}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              )}
 
               {Object.keys(cur.catPerf || {}).length > 0 && (
                 <div className="panel" style={{ marginTop: 20 }}>
@@ -2183,7 +2251,7 @@ function App() {
                         const j = await r.json();
                         if (!r.ok) { setUploadMsg({ ok: false, text: j.error || "AI grading failed" }); return; }
                         const d = await fetch("/api/data").then((x) => x.json());
-                        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
+                        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
                         setUploadMsg({ ok: true, text: `AI graded ${j.graded || 0} calls${j.changed ? ` · ${j.changed} verdicts changed` : ""}.` });
                       } catch (e) { setUploadMsg({ ok: false, text: "AI grading failed: " + e.message }); }
                     }}>Grade {pending} now</button>
