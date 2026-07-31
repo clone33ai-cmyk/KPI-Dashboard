@@ -143,6 +143,7 @@ const SOURCES = {
       { id: "date", label: "Job created date", required: true, match: ["job created date", "created", "creation"] },
       { id: "phone", label: "Customer phone", required: true, match: ["customer mobile number", "customer phone", "mobile", "phone"] },
       { id: "desc", label: "Job description (for sales categories)", required: false, match: ["job description", "description"] },
+      { id: "svc", label: "Service cost (HCP job costing, if used)", required: false, match: ["service cost"] },
       { id: "amount", label: "Job amount", required: true, match: ["job amount", "job total", "invoice total", "amount", "total"] },
       { id: "status", label: "Job status", required: false, match: ["job status", "status"] },
       { id: "completed", label: "Completed date", required: false, match: ["job completed date", "completed", "completion"] },
@@ -418,6 +419,8 @@ function normalizeRow(type, raw, map) {
     base.ph = normPhone(get("phone"));
     const jdRaw = String(get("desc") || "").trim();
     if (jdRaw) base.jd = jdRaw.length > 90 ? jdRaw.slice(0, 90) : jdRaw;
+    const svcCost = parseNum(get("svc"));
+    if (svcCost && svcCost > 0) base.svc = svcCost;
     const st = lc(get("status"));
     const compDate = parseDate(get("completed"));
     base.cd = compDate ? dkey(compDate) : null;
@@ -751,10 +754,11 @@ function computeStats(data, range, numFilter, manual) {
   (data.lineitems || []).forEach((li) => { if (li.jid) (liIdx[li.jid] = liIdx[li.jid] || []).push(li); });
   const catPerf = {};
   let liJobs = 0;
-  const bumpCat = (c, rev, isJob) => {
-    if (!catPerf[c]) catPerf[c] = { jobs: 0, revenue: 0 };
+  const bumpCat = (c, rev, isJob, svc) => {
+    if (!catPerf[c]) catPerf[c] = { jobs: 0, revenue: 0, svc: 0, svcJobs: 0 };
     if (isJob) catPerf[c].jobs++;
     catPerf[c].revenue += rev;
+    if (isJob && svc) { catPerf[c].svc += svc; catPerf[c].svcJobs++; }
   };
   revenueJobs.forEach((j) => {
     const jobRev = j.paidAmt != null ? j.paidAmt : j.amt;
@@ -769,9 +773,9 @@ function computeStats(data, range, numFilter, manual) {
         perCat[c] = (perCat[c] || 0) + li.amt * factor;
       });
       const dominant = Object.entries(perCat).sort((a, b) => b[1] - a[1])[0][0];
-      Object.entries(perCat).forEach(([c, rev]) => bumpCat(c, rev, c === dominant));
+      Object.entries(perCat).forEach(([c, rev]) => bumpCat(c, rev, c === dominant, c === dominant ? j.svc : 0));
     } else {
-      bumpCat(jobCategory(j.jd, j.amt), jobRev, true);
+      bumpCat(jobCategory(j.jd, j.amt), jobRev, true, j.svc);
     }
   });
 
@@ -864,7 +868,7 @@ const fmtVal = (m, v) => {
 /* ================================================================ */
 
 function App() {
-  const [data, setData] = useState({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {} });
+  const [data, setData] = useState({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {} });
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("overview");
   const [preset, setPreset] = useState("mtd");
@@ -897,14 +901,14 @@ function App() {
         const r = await store.get(STORAGE_KEY);
         if (r && r.value) {
           const parsed = JSON.parse(r.value);
-          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
+          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
           fromStore = true;
         }
       } catch (e) { /* nothing stored */ }
       /* embedded default dataset: used whenever nothing is saved in this
          browser (e.g. Google Sites). Saved data always wins over it. */
       if (!fromStore && typeof window !== "undefined" && window.MPLR_DEFAULT_DATA) {
-        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...window.MPLR_DEFAULT_DATA });
+        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...window.MPLR_DEFAULT_DATA });
       }
       setLoaded(true);
     })();
@@ -1040,7 +1044,7 @@ function App() {
         const stillPending = (d.kathy || []).some((r) => !r.ai && r.cid && r.tx);
         if (!stillPending) {
           clearInterval(t);
-          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
+          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
         }
       } catch (e) { /* keep trying */ }
     }, 10000);
@@ -1427,7 +1431,7 @@ function App() {
     reader.onload = (e) => {
       try {
         const parsed = JSON.parse(e.target.result);
-        const next = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed };
+        const next = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed };
         persist(next);
         setUploadMsg({ ok: true, text: "Backup restored." });
       } catch (err) { setUploadMsg({ ok: false, text: "That doesn't look like a dashboard backup file." }); }
@@ -1571,7 +1575,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 39</div>
+            <div className="sub">KPI Dashboard · build 40</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1654,18 +1658,44 @@ function App() {
                   {(() => {
                     const entries = Object.entries(cur.catPerf).sort((a, b) => b[1].revenue - a[1].revenue);
                     const totalRev = entries.reduce((a, [, p]) => a + p.revenue, 0);
+                    const totalJobs = entries.reduce((a, [, p]) => a + p.jobs, 0);
                     const noDesc = cur.catPerf["No description"];
+                    const cpv = parseNum((data.settings || {}).costPerVisit) || 0;
                     return (
                       <>
-                        {entries.filter(([c, p]) => p.revenue > 0 || p.jobs > 0).map(([c, p]) => (
-                          <div className="srcrow" key={c}>
-                            <span style={{ fontWeight: 600, minWidth: 170 }}>{c}</span>
-                            <span className="note">{p.jobs} job{p.jobs === 1 ? "" : "s"}</span>
-                            <span style={{ fontWeight: 800, color: C.ink }}>${Math.round(p.revenue).toLocaleString()}</span>
-                            <span className="note">avg ${Math.round(p.revenue / Math.max(1, p.jobs)).toLocaleString()}</span>
-                            <span style={{ marginLeft: "auto", color: C.goldSoft, fontWeight: 600 }}>{totalRev ? ((p.revenue / totalRev) * 100).toFixed(1) : 0}%</span>
-                          </div>
-                        ))}
+                        {entries.filter(([c, p]) => p.revenue > 0 || p.jobs > 0).map(([c, p]) => {
+                          const tripShare = totalJobs ? (p.jobs / totalJobs) * 100 : 0;
+                          const revShare = totalRev ? (p.revenue / totalRev) * 100 : 0;
+                          const profit = cpv > 0 ? p.revenue - p.jobs * cpv : null;
+                          return (
+                            <div className="srcrow" key={c} style={{ flexWrap: "wrap" }}>
+                              <span style={{ fontWeight: 600, minWidth: 170 }}>{c}</span>
+                              <span className="note">{p.jobs} job{p.jobs === 1 ? "" : "s"} ({tripShare.toFixed(0)}% of trips)</span>
+                              <span style={{ fontWeight: 800, color: C.ink }}>${Math.round(p.revenue).toLocaleString()}</span>
+                              <span className="note">avg ${Math.round(p.revenue / Math.max(1, p.jobs)).toLocaleString()}</span>
+                              {profit != null && (
+                                <span style={{ fontWeight: 800, color: profit >= 0 ? C.green : C.red }}>
+                                  {profit >= 0 ? "+" : "−"}${Math.abs(Math.round(profit)).toLocaleString()} est. profit
+                                </span>
+                              )}
+                              <span style={{ marginLeft: "auto", color: C.goldSoft, fontWeight: 600 }}>{revShare.toFixed(1)}%</span>
+                            </div>
+                          );
+                        })}
+                        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 12, padding: "10px 6px", borderTop: `1px solid ${C.line}` }}>
+                          <span className="note" style={{ fontWeight: 600 }}>Profit model — your all-in cost per job visit (tech time, truck, overhead): $</span>
+                          <input
+                            type="number" min="0" step="5"
+                            defaultValue={(data.settings || {}).costPerVisit || ""}
+                            onBlur={(ev) => { const v = parseNum(ev.target.value) || 0; if (v !== (parseNum((data.settings || {}).costPerVisit) || 0)) persist({ ...data, settings: { ...(data.settings || {}), costPerVisit: v } }); }}
+                            style={{ width: 90, background: C.navy3, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 4, padding: "6px 8px", font: "inherit" }}
+                          />
+                          <span className="note" style={{ flex: "1 1 240px" }}>
+                            {cpv > 0
+                              ? `Estimated profit = collected revenue − ${"$" + cpv}/visit × jobs. A modeled number with one honest assumption; a category in red is paying you less than the trips cost.`
+                              : "Enter it once (saves for everyone) and every category shows estimated profit. HCP job costing is unused in your data (Service cost filled on ~2% of jobs), so this model is the honest alternative until the office starts costing jobs."}
+                          </span>
+                        </div>
                         {noDesc && noDesc.jobs > 0 && (
                           <p className="note" style={{ marginTop: 8 }}>
                             {noDesc.jobs} paid job{noDesc.jobs === 1 ? "" : "s"} have no description on file. If most jobs land here, re-upload the HCP jobs export once so descriptions are captured (the column is now read).
@@ -2000,7 +2030,7 @@ function App() {
                         const j = await r.json();
                         if (!r.ok) { setUploadMsg({ ok: false, text: j.error || "AI grading failed" }); return; }
                         const d = await fetch("/api/data").then((x) => x.json());
-                        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
+                        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
                         setUploadMsg({ ok: true, text: `AI graded ${j.graded || 0} calls${j.changed ? ` · ${j.changed} verdicts changed` : ""}.` });
                       } catch (e) { setUploadMsg({ ok: false, text: "AI grading failed: " + e.message }); }
                     }}>Grade {pending} now</button>
