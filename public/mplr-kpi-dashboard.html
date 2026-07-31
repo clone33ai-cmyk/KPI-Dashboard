@@ -768,13 +768,10 @@ function computeStats(data, range, numFilter, manual) {
     else { wkdayTot++; if (c.answered) wkdayAns++; }
   });
 
-  /* sales by service type.
-     Dollars of record: when the invoices export is loaded, revenue = what was
-     actually COLLECTED on invoices whose payment date falls in the range,
-     categorized via the invoice's Job # -> job description. Fallback (no
-     invoices data): paid jobs from the jobs export. */
+  /* sales by service type: ONE source — the jobs export (description +
+     paid amount in the same row, no joins to break). The invoices export,
+     when loaded, serves as an independent cross-check on the total. */
   const catPerf = {};
-  let catSource = "jobs";
   const bumpCat = (c, rev, isJob, svc, jref) => {
     if (!catPerf[c]) catPerf[c] = { jobs: 0, revenue: 0, svc: 0, svcJobs: 0, members: [] };
     if (isJob) catPerf[c].jobs++;
@@ -782,28 +779,18 @@ function computeStats(data, range, numFilter, manual) {
     if (isJob && svc) { catPerf[c].svc += svc; catPerf[c].svcJobs++; }
     if (isJob && jref) catPerf[c].members.push(jref);
   };
-  const paidInvoices = (data.invoices || []).filter((inv) => inv.pd && inRange(inv.pd, range) && (inv.amt - inv.due) > 0);
-  if (paidInvoices.length) {
-    catSource = "invoices";
-    const descByJid = {};
-    (data.jobs || []).forEach((j) => { if (j.jid && j.jd) descByJid[j.jid] = j.jd; });
-    paidInvoices.forEach((inv) => {
-      const collected = inv.amt - inv.due;
-      const jd = inv.jid ? descByJid[inv.jid] : null;
-      const c = jd ? jobCategory(jd, collected) : "No description";
-      bumpCat(c, collected, true, 0, { jid: inv.jid || inv.iid, d: inv.pd, amt: collected, paidAmt: collected, jd: jd || "(no job description on file)" });
-    });
-  } else {
-    revenueJobs.forEach((j) => {
-      const jobRev = j.paidAmt != null ? j.paidAmt : j.amt;
-      bumpCat(jobCategory(j.jd, j.amt), jobRev, true, j.svc, j);
-    });
-  }
+  revenueJobs.forEach((j) => {
+    const jobRev = j.paidAmt != null ? j.paidAmt : j.amt;
+    bumpCat(jobCategory(j.jd, j.amt), jobRev, true, j.svc, j);
+  });
+  /* independent audit: what the invoices say was collected in this range */
+  const invAudit = (data.invoices || []).filter((inv) => inv.pd && inRange(inv.pd, range) && (inv.amt - inv.due) > 0);
+  const catCheck = invAudit.length ? { collected: invAudit.reduce((a, inv) => a + (inv.amt - inv.due), 0), n: invAudit.length } : null;
 
   return {
     srcPerf,
     catPerf,
-    catSource,
+    catCheck,
     missedOps,
     split: { wkdayTot, wkdayAns, wkendTot, wkendAns },
     counts: {
@@ -1628,7 +1615,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 47</div>
+            <div className="sub">KPI Dashboard · build 48</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1707,19 +1694,14 @@ function App() {
 
               {Object.keys(cur.catPerf || {}).length > 0 && (
                 <div className="panel" style={{ marginTop: 20 }}>
-                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Sales by service type</h2><small>{cur.catSource === "invoices" ? "revenue = dollars actually collected on invoices paid in this date range, categorized by each invoice\u2019s job description" : "paid jobs from the jobs export, categorized by description"}</small></div>
-                  {cur.catSource !== "invoices" && (
-                    <p className="note" style={{ color: C.yellow, fontWeight: 600, marginBottom: 8 }}>
-                      ⚠ Running on the jobs-export fallback. Upload the HCP invoices export (Invoice #, Amount due, Payment date, Job #) and this panel switches to collected-dollar accuracy automatically.
-                    </p>
-                  )}
-                  {cur.catSource === "invoices" && (() => {
+                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Sales by service type</h2><small>paid jobs in this date range, categorized from HCP job descriptions</small></div>
+                  {(() => {
                     const nd = cur.catPerf["No description"];
                     const tot = Object.values(cur.catPerf).reduce((a, p) => a + p.revenue, 0);
                     if (!nd || !tot || nd.revenue / tot < 0.25) return null;
                     return (
                       <p className="note" style={{ color: C.red, fontWeight: 600, marginBottom: 8 }}>
-                        ⚠ ${Math.round(nd.revenue).toLocaleString()} ({Math.round((nd.revenue / tot) * 100)}%) of collected dollars can't be categorized: their jobs have no description on file here. Upload the FULL all-time jobs export WITH the Job description column; the upload message will confirm "Descriptions captured".
+                        ⚠ ${Math.round(nd.revenue).toLocaleString()} ({Math.round((nd.revenue / tot) * 100)}%) of this revenue has no job description on file HERE, even if HCP shows one. That means the last jobs upload didn't carry the column through. Re-upload the jobs export and READ THE UPLOAD MESSAGE: it will either say "Descriptions captured: X of Y" or name the problem.
                       </p>
                     );
                   })()}
@@ -1769,6 +1751,17 @@ function App() {
                             </div>
                           );
                         })}
+                        {cur.catCheck && (() => {
+                          const panelTot = entries.reduce((a, [, p]) => a + p.revenue, 0);
+                          const inv = cur.catCheck.collected;
+                          const delta = inv ? (panelTot - inv) / inv : 0;
+                          const close = Math.abs(delta) <= 0.1;
+                          return (
+                            <p className="note" style={{ marginTop: 10, fontWeight: 600, color: close ? C.green : C.yellow }}>
+                              {close ? "✓" : "⚠"} Cross-check vs invoices: this panel totals ${Math.round(panelTot).toLocaleString()}; the invoices export shows ${Math.round(inv).toLocaleString()} collected in the same range ({cur.catCheck.n.toLocaleString()} invoices){close ? " — within 10%, numbers agree." : ". Gaps come from partial payments, invoices without completed jobs, or paid-in-full timing; if it stays wide, tell me the two numbers."}
+                            </p>
+                          );
+                        })()}
                         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 12, padding: "10px 6px", borderTop: `1px solid ${C.line}` }}>
                           <span className="note" style={{ fontWeight: 600 }}>Profit model — your all-in cost per job visit (tech time, truck, overhead): $</span>
                           <input
