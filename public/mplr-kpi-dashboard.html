@@ -1143,6 +1143,34 @@ function App() {
   }, [scored]);
 
   /* ---------- upload flow ---------- */
+  /* chunked CSV parser: processes big files in slices, yielding to the
+     browser between slices so the tab can never freeze, with progress
+     narration. Handles quoted fields, escaped quotes, embedded newlines. */
+  const parseCsvChunked = async (text, onProgress) => {
+    const rows = [];
+    let field = "", row = [], inQuotes = false;
+    const N = text.length;
+    let i = 0;
+    while (i < N) {
+      const sliceEnd = Math.min(i + 250000, N);
+      for (; i < sliceEnd; i++) {
+        const c = text[i];
+        if (inQuotes) {
+          if (c === '"') {
+            if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false;
+          } else field += c;
+        } else if (c === '"') inQuotes = true;
+        else if (c === ",") { row.push(field); field = ""; }
+        else if (c === "\n") { row.push(field); field = ""; if (row.length > 1 || row[0] !== "") rows.push(row); row = []; }
+        else if (c !== "\r") field += c;
+      }
+      if (onProgress) onProgress(rows.length);
+      await new Promise((r) => setTimeout(r, 0)); /* yield so the UI breathes */
+    }
+    if (field !== "" || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  };
+
   const readWorkbook = async (file) => {
     const watchdog = (ms, what) => new Promise((_, rej) => setTimeout(() => rej(new Error(what + " timed out after " + ms / 1000 + "s. If the file lives in iCloud/OneDrive/Google Drive, copy it to the local Desktop and upload that copy.")), ms));
     const readBytes = async () => {
@@ -1157,8 +1185,19 @@ function App() {
     };
     logStep(`reading bytes of ${file.name}…`);
     const bytes = await Promise.race([readBytes(), watchdog(30000, "reading the file")]);
-    logStep(`read ${Math.round(bytes.length / 1024).toLocaleString()}KB, parsing spreadsheet…`);
-    await new Promise((r) => setTimeout(r, 30)); /* paint before the heavy parse */
+    logStep(`read ${Math.round(bytes.length / 1024).toLocaleString()}KB`);
+    await new Promise((r) => setTimeout(r, 30));
+    if (/\.csv$/i.test(file.name)) {
+      logStep("CSV detected: chunked parser (freeze-proof)…");
+      const text = new TextDecoder("utf-8").decode(bytes).replace(/^\uFEFF/, "");
+      let lastLogged = 0;
+      const cells = await parseCsvChunked(text, (n) => { if (n - lastLogged >= 4000) { lastLogged = n; logStep(`…${n.toLocaleString()} lines parsed`); } });
+      logStep(`CSV parsed: ${cells.length.toLocaleString()} lines`);
+      /* hand XLSX a pre-parsed grid: fast, no giant string work */
+      const ws = XLSX.utils.aoa_to_sheet(cells);
+      return { SheetNames: ["Sheet1"], Sheets: { Sheet1: ws } };
+    }
+    logStep("parsing spreadsheet…");
     const wb = XLSX.read(bytes, { type: "array", cellDates: true });
     logStep(`parsed workbook: ${wb.SheetNames.length} sheet(s)`);
     return wb;
@@ -1488,7 +1527,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 56</div>
+            <div className="sub">KPI Dashboard · build 57</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
