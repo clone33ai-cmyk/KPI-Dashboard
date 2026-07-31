@@ -1143,12 +1143,26 @@ function App() {
   }, [scored]);
 
   /* ---------- upload flow ---------- */
-  const readWorkbook = (file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => { try { resolve(XLSX.read(e.target.result, { type: "array", cellDates: true })); } catch (err) { reject(err); } };
-    reader.onerror = () => reject(new Error("read failed"));
-    reader.readAsArrayBuffer(file);
-  });
+  const readWorkbook = async (file) => {
+    const watchdog = (ms, what) => new Promise((_, rej) => setTimeout(() => rej(new Error(what + " timed out after " + ms / 1000 + "s. If the file lives in iCloud/OneDrive/Google Drive, copy it to the local Desktop and upload that copy.")), ms));
+    const readBytes = async () => {
+      if (file.arrayBuffer) return new Uint8Array(await file.arrayBuffer());
+      return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(new Uint8Array(e.target.result));
+        reader.onerror = () => reject(new Error("the browser could not read the file (reader error)"));
+        reader.onabort = () => reject(new Error("file read was aborted"));
+        reader.readAsArrayBuffer(file);
+      });
+    };
+    logStep(`reading bytes of ${file.name}…`);
+    const bytes = await Promise.race([readBytes(), watchdog(30000, "reading the file")]);
+    logStep(`read ${Math.round(bytes.length / 1024).toLocaleString()}KB, parsing spreadsheet…`);
+    await new Promise((r) => setTimeout(r, 30)); /* paint before the heavy parse */
+    const wb = XLSX.read(bytes, { type: "array", cellDates: true });
+    logStep(`parsed workbook: ${wb.SheetNames.length} sheet(s)`);
+    return wb;
+  };
 
   const mapKey = (type, headers) => type + "|" + headers.join("\u00a6");
 
@@ -1256,7 +1270,7 @@ function App() {
       try {
         const wb = await readWorkbook(file);
         table = findTable(wb, SOURCES[type].fields);
-      } catch (e) { /* handled below */ }
+      } catch (e) { logStep(`FILE ERROR ${file.name}: ${e.message}`); }
       if (!table || !table.rows.length) { unreadable++; continue; }
       let map = working.mapMemory[mapKey(type, table.headers)];
       if (!map) {
@@ -1273,7 +1287,7 @@ function App() {
         });
       }
       let missing = SOURCES[type].fields.filter((f) => f.required && !map[f.id]);
-      if (missing.length) { needsMapping.push({ type, headers: table.headers, rows: table.rows, map, fileName: file.name }); continue; }
+      if (missing.length) { logStep(`${file.name}: ${missing.length} required column(s) unmatched — one-time picker shown below`); needsMapping.push({ type, headers: table.headers, rows: table.rows, map, fileName: file.name }); continue; }
       logStep(`parsed ${file.name}: ${table.rows.length.toLocaleString()} rows recognized as ${type}`);
       const res = applyImport(working, type, table.rows, map);
       logStep(`merged: +${res.added} new, ${res.updated || 0} updated${res.rebuilt !== undefined ? " (full rebuild)" : ""}`);
@@ -1474,7 +1488,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 55</div>
+            <div className="sub">KPI Dashboard · build 56</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
