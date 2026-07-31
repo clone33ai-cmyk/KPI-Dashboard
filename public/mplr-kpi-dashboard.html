@@ -86,10 +86,12 @@ const store = {
   },
   async set(k, v) {
     if (SERVER_MODE) {
-      try {
-        const r = await fetch("/api/data", { method: "POST", headers: { "Content-Type": "application/json" }, body: v });
-        if (r.ok) return { key: k, value: v };
-      } catch (e) { /* fall through */ }
+      /* in server mode a failed save must FAIL LOUDLY — falling back to
+         browser storage silently strands the data in one tab and every
+         refresh resurrects the server's stale copy */
+      const r = await fetch("/api/data", { method: "POST", headers: { "Content-Type": "application/json" }, body: v });
+      if (!r.ok) throw new Error(`server rejected the save (HTTP ${r.status}${r.status === 413 ? " — data exceeds the server's size limit; deploy the latest server.js" : ""})`);
+      return { key: k, value: v };
     }
     if (typeof window !== "undefined" && window.storage && window.storage.set) return window.storage.set(k, v);
     localStorage.setItem(k, v);
@@ -863,7 +865,10 @@ function App() {
       await store.set(STORAGE_KEY, JSON.stringify(toSave));
       setSaveState("saved");
       setTimeout(() => setSaveState(""), 1500);
-    } catch (e) { setSaveState("error"); }
+    } catch (e) {
+      setSaveState("error");
+      setUploadMsg({ ok: false, text: "⚠ SAVE FAILED — nothing was stored on the server: " + e.message + ". Fix the cause and upload again; until a save succeeds, refreshing will show the old data." });
+    }
   };
 
   const allDates = useMemo(
@@ -1437,7 +1442,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 51</div>
+            <div className="sub">KPI Dashboard · build 52</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
