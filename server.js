@@ -20,7 +20,7 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const DATA_FILE = path.join(DATA_DIR, "mplr-kpi-data.json");
 
-app.use(express.json({ limit: "25mb" }));
+app.use(express.json({ limit: "100mb" }));
 
 /* ---------------- basic auth ---------------- */
 app.use((req, res, next) => {
@@ -36,7 +36,7 @@ app.use((req, res, next) => {
 });
 
 /* ---------------- storage ---------------- */
-const EMPTY = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, meta: {} };
+const EMPTY = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], kathy: [], settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, meta: {} };
 
 function loadData() {
   try { return { ...EMPTY, ...JSON.parse(fs.readFileSync(DATA_FILE, "utf8")) }; }
