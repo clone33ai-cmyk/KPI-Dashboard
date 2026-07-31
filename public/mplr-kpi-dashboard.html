@@ -191,10 +191,10 @@ const SOURCES = {
     ],
   },
   svcmix: {
-    label: "Housecall Pro — Services on jobs report (Reporting → Jobs)",
-    tip: "HCP's own line-item totals: one row per service item with quantity and gross revenue. Exact category splits with zero guessing. Re-upload any time; each upload replaces the last snapshot.",
+    label: "Housecall Pro — Services / Materials on jobs reports (Reporting → Jobs)",
+    tip: "HCP line-item totals: the services AND materials reports both fit here and combine into one mix. One row per item with quantity and gross revenue. Re-uploads update items by name.",
     fields: [
-      { id: "name", label: "Service item name", required: true, match: ["service item name", "service item", "item name", "service"] },
+      { id: "name", label: "Service item name", required: true, match: ["service item name", "material name", "service item", "item name", "material", "service"] },
       { id: "revenue", label: "Gross revenue", required: true, match: ["gross revenue", "revenue"] },
       { id: "qty", label: "Total quantity", required: false, match: ["total quantity", "quantity", "qty"] },
       { id: "jcount", label: "Job count", required: false, match: ["job count", "jobs"] },
@@ -214,15 +214,6 @@ const SOURCES = {
       { id: "name", label: "Customer name", required: false, match: ["customer name", "customer", "name"] },
       { id: "phone", label: "Phone", required: false, match: ["phone", "mobile"] },
       { id: "jid", label: "Job #", required: false, match: ["job #", "job number"] },
-    ],
-  },
-  lineitems: {
-    label: "Housecall Pro — Invoice line items",
-    tip: "One row per line item (Job #, item name, item amount). Makes Sales by service type exact: mixed invoices split revenue across categories instead of lumping under one description.",
-    fields: [
-      { id: "jid", label: "Job / Invoice #", required: true, match: ["job #", "job number", "invoice #", "invoice number", "job"] },
-      { id: "name", label: "Line item name", required: true, match: ["line item", "item name", "item", "name", "description", "service"] },
-      { id: "amount", label: "Line item amount", required: true, match: ["amount", "line total", "total", "price", "subtotal"] },
     ],
   },
   kathy: {
@@ -301,6 +292,8 @@ const normPhone = (v) => {
 /* sales category from the HCP job description; rules tuned on real data */
 function jobCategory(desc, amt) {
   const s = String(desc || "").toLowerCase();
+  if (/go ?back/.test(s)) return "Go-Backs (free returns)";
+  if ((!amt || amt === 0) && /diagnosis summary|\bld notes\b|detection report|notas|remodel quote|\bfree\b/.test(s)) return "Documentation ($0 items)";
   if (/drain (and|&|n)? ?seal|seal restoration|leak seal|underwater seal|drain pool|drenar/.test(s)) return "Drain & Seal";
   if (/equipment (diagnostic|inspection)|diagnostic service/.test(s)) return "Equipment Inspection";
   if (/pump|filter|heater|motor|salt cell|actuator|booster|automation|equipment (repair|install|replace)/.test(s)) return "Equipment";
@@ -312,7 +305,7 @@ function jobCategory(desc, amt) {
   if (/\bdeck|deco ?seal/.test(s)) return "Deck";
   if (/light/.test(s)) return "Lighting";
   if (/ld notes|leak repair|3 year no leak/.test(s)) return "Leak Repair";
-  if (/leak detect|detection|leak diagnosis|go back|water feature test/.test(s)) return "Leak Detection";
+  if (/leak detect|detection|leak diagnosis|water feature test/.test(s)) return "Leak Detection";
   if (/\*|notas|check notes|check pickup|pick ?up check|ayudar|fotos?\b/.test(s)) return "Internal/Tasks";
   if (/\brepair/.test(s)) return "Leak Repair";
   if (amt >= 370 && amt <= 380) return "Leak Detection";
@@ -417,7 +410,7 @@ function normalizeRow(type, raw, map) {
   }
 
   const date = parseDate(get("date"));
-  if (!date && type !== "lineitems" && type !== "invoices" && type !== "svcmix") return null;
+  if (!date && type !== "invoices" && type !== "svcmix") return null;
   const base = { d: date ? dkey(date) : "1970-01-01" };
 
   if (type === "calls") {
@@ -483,13 +476,6 @@ function normalizeRow(type, raw, map) {
     const ijid = String(get("jid") || "").replace(/\D/g, "");
     if (ijid) base.jid = ijid;
     base.d = base.dd || base.pd || base.d;
-  }
-  if (type === "lineitems") {
-    const liJid = String(get("jid") || "").replace(/\D/g, "");
-    if (!liJid) return null;
-    base.jid = liJid;
-    base.nm = String(get("name") || "").trim().slice(0, 90);
-    base.amt = parseNum(get("amount")) || 0;
   }
   if (type === "kathy") {
     const tx = String(get("transcript") || "");
@@ -800,12 +786,13 @@ function computeStats(data, range, numFilter, manual) {
     else { wkdayTot++; if (c.answered) wkdayAns++; }
   });
 
-  /* sales by service type. Line-item precision when items exist for a job;
-     description fallback otherwise. Splits scale to collected dollars. */
-  const liIdx = {};
-  (data.lineitems || []).forEach((li) => { if (li.jid) (liIdx[li.jid] = liIdx[li.jid] || []).push(li); });
+  /* sales by service type.
+     Dollars of record: when the invoices export is loaded, revenue = what was
+     actually COLLECTED on invoices whose payment date falls in the range,
+     categorized via the invoice's Job # -> job description. Fallback (no
+     invoices data): paid jobs from the jobs export. */
   const catPerf = {};
-  let liJobs = 0;
+  let catSource = "jobs";
   const bumpCat = (c, rev, isJob, svc, jref) => {
     if (!catPerf[c]) catPerf[c] = { jobs: 0, revenue: 0, svc: 0, svcJobs: 0, members: [] };
     if (isJob) catPerf[c].jobs++;
@@ -813,29 +800,28 @@ function computeStats(data, range, numFilter, manual) {
     if (isJob && svc) { catPerf[c].svc += svc; catPerf[c].svcJobs++; }
     if (isJob && jref) catPerf[c].members.push(jref);
   };
-  revenueJobs.forEach((j) => {
-    const jobRev = j.paidAmt != null ? j.paidAmt : j.amt;
-    const items = j.jid ? liIdx[j.jid] : null;
-    const itemsTotal = items ? items.reduce((a, li) => a + (li.amt || 0), 0) : 0;
-    if (items && itemsTotal > 0) {
-      liJobs++;
-      const factor = jobRev / itemsTotal;
-      const perCat = {};
-      items.forEach((li) => {
-        const c = jobCategory(li.nm, li.amt);
-        perCat[c] = (perCat[c] || 0) + li.amt * factor;
-      });
-      const dominant = Object.entries(perCat).sort((a, b) => b[1] - a[1])[0][0];
-      Object.entries(perCat).forEach(([c, rev]) => bumpCat(c, rev, c === dominant, c === dominant ? j.svc : 0, c === dominant ? j : null));
-    } else {
+  const paidInvoices = (data.invoices || []).filter((inv) => inv.pd && inRange(inv.pd, range) && (inv.amt - inv.due) > 0);
+  if (paidInvoices.length) {
+    catSource = "invoices";
+    const descByJid = {};
+    (data.jobs || []).forEach((j) => { if (j.jid && j.jd) descByJid[j.jid] = j.jd; });
+    paidInvoices.forEach((inv) => {
+      const collected = inv.amt - inv.due;
+      const jd = inv.jid ? descByJid[inv.jid] : null;
+      const c = jd ? jobCategory(jd, collected) : "No description";
+      bumpCat(c, collected, true, 0, { jid: inv.jid || inv.iid, d: inv.pd, amt: collected, paidAmt: collected, jd: jd || "(no job description on file)" });
+    });
+  } else {
+    revenueJobs.forEach((j) => {
+      const jobRev = j.paidAmt != null ? j.paidAmt : j.amt;
       bumpCat(jobCategory(j.jd, j.amt), jobRev, true, j.svc, j);
-    }
-  });
+    });
+  }
 
   return {
     srcPerf,
     catPerf,
-    catLiJobs: liJobs,
+    catSource,
     missedOps,
     split: { wkdayTot, wkdayAns, wkendTot, wkendAns },
     counts: {
@@ -921,7 +907,7 @@ const fmtVal = (m, v) => {
 /* ================================================================ */
 
 function App() {
-  const [data, setData] = useState({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {} });
+  const [data, setData] = useState({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {} });
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState("overview");
   const [preset, setPreset] = useState("mtd");
@@ -944,7 +930,7 @@ function App() {
     empty: { label: "No data", color: C.gray },
     manual: { label: "Manual", color: C.gray },
   };
-  const fileRefs = { calls: useRef(), jobs: useRef(), ads: useRef(), lsa: useRef(), lsabill: useRef(), estimates: useRef(), kathy: useRef(), lineitems: useRef(), invoices: useRef(), svcmix: useRef() };
+  const fileRefs = { calls: useRef(), jobs: useRef(), ads: useRef(), lsa: useRef(), lsabill: useRef(), estimates: useRef(), kathy: useRef(), invoices: useRef(), svcmix: useRef() };
   const backupRef = useRef();
 
   useEffect(() => {
@@ -954,14 +940,14 @@ function App() {
         const r = await store.get(STORAGE_KEY);
         if (r && r.value) {
           const parsed = JSON.parse(r.value);
-          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
+          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
           fromStore = true;
         }
       } catch (e) { /* nothing stored */ }
       /* embedded default dataset: used whenever nothing is saved in this
          browser (e.g. Google Sites). Saved data always wins over it. */
       if (!fromStore && typeof window !== "undefined" && window.MPLR_DEFAULT_DATA) {
-        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...window.MPLR_DEFAULT_DATA });
+        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...window.MPLR_DEFAULT_DATA });
       }
       setLoaded(true);
     })();
@@ -1097,7 +1083,7 @@ function App() {
         const stillPending = (d.kathy || []).some((r) => !r.ai && r.cid && r.tx);
         if (!stillPending) {
           clearInterval(t);
-          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
+          setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
         }
       } catch (e) { /* keep trying */ }
     }, 10000);
@@ -1329,10 +1315,20 @@ function App() {
     if (type === "ads" && normalized.some((r) => r.kind === "ta")) normalized = normalized.filter((r) => r.kind === "ta");
 
     if (type === "svcmix") {
-      /* snapshot report: each upload replaces the previous one */
-      working.svcmix = normalized;
+      /* services + materials reports combine; items update by name */
+      const kept = [...(working.svcmix || [])];
+      const byName = {};
+      kept.forEach((r, i) => { byName[(r.nm || "").toLowerCase()] = i; });
+      let addedCount = 0, dupes = 0, updated = 0;
+      normalized.forEach((r) => {
+        const k = (r.nm || "").toLowerCase();
+        if (byName[k] !== undefined) {
+          if (JSON.stringify(kept[byName[k]]) !== JSON.stringify(r)) { kept[byName[k]] = r; updated++; } else dupes++;
+        } else { byName[k] = kept.length; kept.push(r); addedCount++; }
+      });
+      working.svcmix = kept;
       working.settings = { ...(working.settings || {}), svcmixAt: new Date().toISOString().slice(0, 10) };
-      return { added: normalized.length, dupes: 0, updated: 0 };
+      return { added: addedCount, dupes, updated };
     }
 
     if (type === "invoices") {
@@ -1350,17 +1346,6 @@ function App() {
       return { added: addedCount, dupes, updated };
     }
 
-    if (type === "lineitems") {
-      const kept = [...(working.lineitems || [])];
-      const seen = new Set(kept.map((r) => JSON.stringify(r)));
-      let addedCount = 0, dupes = 0;
-      normalized.forEach((r) => {
-        const k = JSON.stringify(r);
-        if (seen.has(k)) dupes++; else { seen.add(k); kept.push(r); addedCount++; }
-      });
-      working.lineitems = kept;
-      return { added: addedCount, dupes, updated: 0 };
-    }
 
     if (type === "kathy") {
       const kept = [...(working.kathy || [])];
@@ -1533,7 +1518,7 @@ function App() {
     reader.onload = (e) => {
       try {
         const parsed = JSON.parse(e.target.result);
-        const next = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed };
+        const next = { calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed };
         persist(next);
         setUploadMsg({ ok: true, text: "Backup restored." });
       } catch (err) { setUploadMsg({ ok: false, text: "That doesn't look like a dashboard backup file." }); }
@@ -1677,7 +1662,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 43</div>
+            <div className="sub">KPI Dashboard · build 46</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1756,17 +1741,26 @@ function App() {
 
               {(data.svcmix || []).length > 0 && (
                 <div className="panel" style={{ marginTop: 20 }}>
-                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Service mix — exact totals</h2><small>from HCP's services report{(data.settings || {}).svcmixAt ? ` uploaded ${data.settings.svcmixAt}` : ""}: trailing-365-day line-item totals, split exactly by HCP itself. Fixed window, not affected by the date filter above.</small></div>
+                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Price-book service mix</h2><small>HCP's services report{(data.settings || {}).svcmixAt ? ` (uploaded ${data.settings.svcmixAt})` : ""}: trailing-365 totals for PRICE-BOOK items only. Custom-typed invoice lines (most of your repair billing) are invisible to this report, so treat the panel below as the source of truth for dollars.</small></div>
                   {(() => {
                     const cats = {};
                     (data.svcmix || []).forEach((it) => {
-                      const c = /unassigned/.test((it.nm || "").toLowerCase()) ? "No price book item" : jobCategory(it.nm, 0);
+                      const c = /unassigned/.test((it.nm || "").toLowerCase()) ? "No price book item" : jobCategory(it.nm, it.rev);
                       if (!cats[c]) cats[c] = { rev: 0, qty: 0, items: [] };
                       cats[c].rev += it.rev; cats[c].qty += it.qty; cats[c].items.push(it);
                     });
                     const entries = Object.entries(cats).sort((a, b) => b[1].rev - a[1].rev);
                     const total = entries.reduce((a, [, p]) => a + p.rev, 0);
-                    return entries.map(([c, p]) => {
+                    const gb = cats["Go-Backs (free returns)"];
+                    const detQty = (cats["Leak Detection"] || {}).qty || 0;
+                    const cpvMix = parseNum((data.settings || {}).costPerVisit) || 0;
+                    const gbNote = gb && gb.qty > 0 ? (
+                      <p className="note" key="gbnote" style={{ marginBottom: 8 }}>
+                        <b style={{ color: C.ink }}>{gb.qty} free return visits</b> in the period{detQty ? ` (≈${Math.round((gb.qty / detQty) * 100)}% of paid detections needed a go-back)` : ""}.
+                        {cpvMix > 0 ? <> At your ${cpvMix}/visit cost, that's <b style={{ color: C.red }}>≈${Math.round(gb.qty * cpvMix).toLocaleString()}</b> of unbilled truck rolls: the hidden cost of the detection line.</> : " Set the cost-per-visit in the profit model below to see what these cost you."}
+                      </p>
+                    ) : null;
+                    return [gbNote, ...entries.map(([c, p]) => {
                       const key = "mix-" + c;
                       const isOpen = openEstRow === key;
                       return (
@@ -1792,14 +1786,14 @@ function App() {
                           )}
                         </div>
                       );
-                    });
+                    })];
                   })()}
                 </div>
               )}
 
               {Object.keys(cur.catPerf || {}).length > 0 && (
                 <div className="panel" style={{ marginTop: 20 }}>
-                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Sales by service type</h2><small>{cur.catLiJobs ? `line-item precision on ${cur.catLiJobs} of ${cur.counts.jobs} paid jobs; descriptions for the rest` : "categorized from job descriptions — upload invoice line items for exact splits on mixed invoices"}</small></div>
+                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Sales by service type</h2><small>{cur.catSource === "invoices" ? "revenue = dollars actually collected on invoices paid in this date range, categorized by each invoice\u2019s job description" : "paid jobs from the jobs export, categorized by description"}</small></div>
                   {(() => {
                     const entries = Object.entries(cur.catPerf).sort((a, b) => b[1].revenue - a[1].revenue);
                     const totalRev = entries.reduce((a, [, p]) => a + p.revenue, 0);
@@ -2251,7 +2245,7 @@ function App() {
                         const j = await r.json();
                         if (!r.ok) { setUploadMsg({ ok: false, text: j.error || "AI grading failed" }); return; }
                         const d = await fetch("/api/data").then((x) => x.json());
-                        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], lineitems: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
+                        setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], invoices: [], svcmix: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...d });
                         setUploadMsg({ ok: true, text: `AI graded ${j.graded || 0} calls${j.changed ? ` · ${j.changed} verdicts changed` : ""}.` });
                       } catch (e) { setUploadMsg({ ok: false, text: "AI grading failed: " + e.message }); }
                     }}>Grade {pending} now</button>
