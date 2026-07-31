@@ -820,6 +820,13 @@ function App() {
   const [saveState, setSaveState] = useState("");
   const [pendingList, setPendingList] = useState([]);
   const [uploadMsg, setUploadMsg] = useState(null);
+  const [serverInfo, setServerInfo] = useState(null);
+  const [uplog, setUplog] = useState([]);
+  const logStep = (msg) => setUplog((l) => [...l.slice(-9), `${new Date().toTimeString().slice(0, 8)}  ${msg}`]);
+  useEffect(() => {
+    if (!SERVER_MODE) return;
+    fetch("/api/health").then((r) => r.json()).then(setServerInfo).catch(() => setServerInfo({ ok: false }));
+  }, []);
   useEffect(() => {
     const onErr = (e) => setUploadMsg({ ok: false, text: "⚠ Page error: " + (e.message || (e.reason && e.reason.message) || "unknown") + " — send this to Claude." });
     window.addEventListener("error", onErr);
@@ -868,10 +875,14 @@ function App() {
     setSaveState("saving");
     try {
       const { _phoneIdx, ...toSave } = next;
-      await store.set(STORAGE_KEY, JSON.stringify(toSave));
+      const body = JSON.stringify(toSave);
+      logStep(`saving to server: ${(body.length / 1048576).toFixed(1)}MB payload…`);
+      await store.set(STORAGE_KEY, body);
+      logStep("save confirmed by server");
       setSaveState("saved");
       setTimeout(() => setSaveState(""), 1500);
     } catch (e) {
+      logStep(`SAVE FAILED: ${e.message}`);
       setSaveState("error");
       setUploadMsg({ ok: false, text: "⚠ SAVE FAILED — nothing was stored on the server: " + e.message + ". Fix the cause and upload again; until a save succeeds, refreshing will show the old data." });
     }
@@ -1222,11 +1233,13 @@ function App() {
      screen only appears when a required column can't be found, and
      confirmed mappings are remembered for future uploads */
   const handleFiles = async (type, fileList) => {
+    logStep(`file selected for ${type}: ${[...fileList].map((f) => f.name + " (" + Math.round(f.size / 1024) + "KB)").join(", ")}`);
     setUploadMsg({ ok: true, text: `Reading ${[...fileList].map((f) => f.name).join(", ")}… (${SOURCES[type].label}). Large exports take a few seconds.` });
     await new Promise((r) => setTimeout(r, 30)); /* let that paint before the heavy parse */
     try {
       return await handleFilesInner(type, fileList);
     } catch (e) {
+      logStep(`CRASH: ${e.message}`);
       setUploadMsg({ ok: false, text: `⚠ Upload crashed while processing: ${e.message}. Send this exact message to Claude.` });
     }
   };
@@ -1261,7 +1274,9 @@ function App() {
       }
       let missing = SOURCES[type].fields.filter((f) => f.required && !map[f.id]);
       if (missing.length) { needsMapping.push({ type, headers: table.headers, rows: table.rows, map, fileName: file.name }); continue; }
+      logStep(`parsed ${file.name}: ${table.rows.length.toLocaleString()} rows recognized as ${type}`);
       const res = applyImport(working, type, table.rows, map);
+      logStep(`merged: +${res.added} new, ${res.updated || 0} updated${res.rebuilt !== undefined ? " (full rebuild)" : ""}`);
       working.mapMemory[mapKey(type, table.headers)] = map;
       added += res.added; dupes += res.dupes; updatedCount += res.updated || 0; imported++;
       if (type === "jobs") {
@@ -1459,7 +1474,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 54</div>
+            <div className="sub">KPI Dashboard · build 55</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -2110,6 +2125,18 @@ function App() {
               </div>
             ) : (
               <>
+                {SERVER_MODE && (
+                  serverInfo === null ? null : serverInfo.serverBuild ? (
+                    <p className="note" style={{ color: C.green, fontWeight: 600, marginBottom: 8 }}>✓ Server build {serverInfo.serverBuild} · upload limit {serverInfo.uploadLimit}</p>
+                  ) : (
+                    <p className="note" style={{ color: C.red, fontWeight: 700, marginBottom: 8 }}>⚠ THE SERVER IS RUNNING AN OLD BUILD. Uploads will fail until you deploy the new server.js (it raises the save limit and identifies itself here). The dashboard HTML alone is not enough.</p>
+                  )
+                )}
+                {uplog.length > 0 && (
+                  <div style={{ background: C.navy3, border: `1px solid ${C.line}`, borderRadius: 6, padding: "8px 12px", marginBottom: 12, fontFamily: "monospace", fontSize: 12, whiteSpace: "pre-wrap" }}>
+                    {uplog.join("\n")}
+                  </div>
+                )}
                 <div className="upgrid">
                   {Object.entries(SOURCES).map(([type, cfg]) => (
                     <div className="upcard" key={type}>
