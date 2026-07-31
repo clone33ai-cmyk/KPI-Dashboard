@@ -301,7 +301,12 @@ function jobCategory(desc, amt) {
   if (/\bdeck|deco ?seal/.test(s)) return "Deck";
   if (/light/.test(s)) return "Lighting";
   if (/ld notes|leak repair|3 year no leak/.test(s)) return "Leak Repair";
-  if (/leak detect|detection|leak diagnosis|water feature test/.test(s)) return "Leak Detection";
+  if (/leak detect|detection|leak diagnosis|water feature test/.test(s)) {
+    /* your office bills repairs on detection-described jobs ("Leak Detection
+       Report", $18k). Detection tops out ~$650-$1,050 even doubled; above
+       $1,200 the dollars are repair work. Verified on 3,218 real jobs. */
+    return amt && amt > 1200 ? "Leak Repair" : "Leak Detection";
+  }
   if (/\*|notas|check notes|check pickup|pick ?up check|ayudar|fotos?\b/.test(s)) return "Internal/Tasks";
   if (/\brepair/.test(s)) return "Leak Repair";
   if (amt >= 370 && amt <= 380) return "Leak Detection";
@@ -1629,7 +1634,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 49</div>
+            <div className="sub">KPI Dashboard · build 50</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
