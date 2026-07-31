@@ -1367,6 +1367,15 @@ function App() {
       if (!map) {
         map = {}; const used = new Set();
         SOURCES[type].fields.forEach((f) => { const hit = matchHeader(table.headers, used, f.match); if (hit) { map[f.id] = hit; used.add(hit); } });
+      } else {
+        /* a remembered mapping may predate newer fields (e.g. job
+           description): auto-match anything the memory doesn't cover,
+           without disturbing the columns the person confirmed */
+        map = { ...map };
+        const used = new Set(Object.values(map));
+        SOURCES[type].fields.forEach((f) => {
+          if (!map[f.id]) { const hit = matchHeader(table.headers, used, f.match); if (hit) { map[f.id] = hit; used.add(hit); } }
+        });
       }
       let missing = SOURCES[type].fields.filter((f) => f.required && !map[f.id]);
       /* estimates need a dollar column and a decision column to be useful */
@@ -1562,7 +1571,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 38</div>
+            <div className="sub">KPI Dashboard · build 39</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
