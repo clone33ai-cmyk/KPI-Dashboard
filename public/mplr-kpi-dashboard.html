@@ -820,6 +820,12 @@ function App() {
   const [saveState, setSaveState] = useState("");
   const [pendingList, setPendingList] = useState([]);
   const [uploadMsg, setUploadMsg] = useState(null);
+  useEffect(() => {
+    const onErr = (e) => setUploadMsg({ ok: false, text: "⚠ Page error: " + (e.message || (e.reason && e.reason.message) || "unknown") + " — send this to Claude." });
+    window.addEventListener("error", onErr);
+    window.addEventListener("unhandledrejection", onErr);
+    return () => { window.removeEventListener("error", onErr); window.removeEventListener("unhandledrejection", onErr); };
+  }, []);
   const [trendMetric, setTrendMetric] = useState("answerRate");
   const [showAccuracy, setShowAccuracy] = useState(false);
   const [showLsaManual, setShowLsaManual] = useState(false);
@@ -1216,6 +1222,16 @@ function App() {
      screen only appears when a required column can't be found, and
      confirmed mappings are remembered for future uploads */
   const handleFiles = async (type, fileList) => {
+    setUploadMsg({ ok: true, text: `Reading ${[...fileList].map((f) => f.name).join(", ")}… (${SOURCES[type].label}). Large exports take a few seconds.` });
+    await new Promise((r) => setTimeout(r, 30)); /* let that paint before the heavy parse */
+    try {
+      return await handleFilesInner(type, fileList);
+    } catch (e) {
+      setUploadMsg({ ok: false, text: `⚠ Upload crashed while processing: ${e.message}. Send this exact message to Claude.` });
+    }
+  };
+
+  const handleFilesInner = async (type, fileList) => {
     setUploadMsg(null);
     const files = Array.from(fileList);
     const working = { ...data, mapMemory: { ...(data.mapMemory || {}) } };
@@ -1442,7 +1458,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 52</div>
+            <div className="sub">KPI Dashboard · build 53</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -2099,10 +2115,14 @@ function App() {
                       <h3>{cfg.label}</h3>
                       <p className="tip">{cfg.tip}</p>
                       <p className="count">{data[type].length.toLocaleString()} rows on file</p>
-                      <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-                        <input ref={fileRefs[type]} type="file" accept=".csv,.xlsx,.xls" multiple style={{ display: "none" }}
-                          onChange={(e) => { if (e.target.files.length) handleFiles(type, e.target.files); e.target.value = ""; }} />
-                        <button className="btn" onClick={() => fileRefs[type].current.click()}>Upload file(s)</button>
+                      <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => { e.preventDefault(); if (e.dataTransfer.files.length) handleFiles(type, e.dataTransfer.files); }}>
+                        <label className="btn" style={{ cursor: "pointer", display: "inline-block" }}>
+                          Upload file(s)
+                          <input ref={fileRefs[type]} type="file" accept=".csv,.xlsx,.xls" multiple style={{ display: "none" }}
+                            onChange={(e) => { if (e.target.files.length) handleFiles(type, e.target.files); e.target.value = ""; }} />
+                        </label>
                         {data[type].length > 0 && <button className="btn ghost" onClick={() => clearSource(type)}>Clear data</button>}
                       </div>
                     </div>
