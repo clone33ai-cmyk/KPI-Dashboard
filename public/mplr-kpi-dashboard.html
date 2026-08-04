@@ -1612,7 +1612,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 64</div>
+            <div className="sub">KPI Dashboard · build 65</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1963,8 +1963,12 @@ function App() {
 
         {/* ================= SALES ================= */}
         {tab === "sales" && (
-          !hasData ? (
-            <div className="panel"><p>No data on file yet. Upload the Housecall Pro jobs export on the Data tab and this page fills in.</p></div>
+          !hasData || Object.keys(cur.catPerf || {}).length === 0 ? (
+            <div className="panel">
+              <p style={{ marginBottom: 10 }}><b>No paid jobs on file for this date range.</b></p>
+              <p className="note" style={{ marginBottom: 12 }}>Job data is currently empty or has no paid jobs in the selected window. Two ways to fill it: press Sync from HCP on the Data tab (pulls jobs, line items, and estimates straight from Housecall Pro), or re-upload the HCP jobs export for exact historical paid dates. Widening the date range can also help.</p>
+              <button className="btn" onClick={() => setTab("upload")}>Go to Data</button>
+            </div>
           ) : (
             <>
               {Object.keys(cur.catPerf || {}).length > 0 && (
@@ -2428,7 +2432,7 @@ function App() {
                 <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                   <div style={{ flex: "1 1 320px" }}>
                     <b style={{ color: C.gold }}>HCP direct sync — true line items</b>
-                    <p className="note" style={{ margin: "4px 0 0" }}>Pulls every job and its invoice line items straight from Housecall Pro, so Sales by service type reads the actual work sold instead of guessing from descriptions.{data.meta && data.meta.hcpSync ? ` Last sync: ${new Date(data.meta.hcpSync.at).toLocaleString()} — ${(data.meta.hcpSync.withLineItems || 0).toLocaleString()} jobs with line items.` : ""}</p>
+                    <p className="note" style={{ margin: "4px 0 0" }}>Pulls every job with its invoice line items AND all estimates straight from Housecall Pro — no more daily sheet uploads. Runs itself nightly at 2:00 AM Central; this button forces it now.{data.meta && data.meta.hcpSync ? ` Last sync: ${new Date(data.meta.hcpSync.at).toLocaleString()} — ${(data.meta.hcpSync.withLineItems || 0).toLocaleString()} jobs with line items.` : ""}</p>
                   </div>
                   <button className="btn" disabled={hcpBusy} onClick={startHcpSync}>{hcpBusy ? "Syncing…" : "Sync from HCP"}</button>
                 </div>
@@ -2436,7 +2440,7 @@ function App() {
                   <p className="note" style={{ marginTop: 8, color: hcpStatus.error ? C.red : C.dim, fontFamily: "monospace", fontSize: 12 }}>
                     {hcpStatus.error
                       ? `⚠ ${hcpStatus.error}${hcpStatus.authHint ? " — " + hcpStatus.authHint : ""}`
-                      : `${hcpStatus.phase || "…"} · ${(hcpStatus.jobsSeen || 0).toLocaleString()} jobs · ${(hcpStatus.liFetched || 0).toLocaleString()} line-item sets · ${(hcpStatus.merged || 0).toLocaleString()} merged${hcpStatus.created ? ` · ${hcpStatus.created.toLocaleString()} jobs created from HCP` : ""}${hcpStatus.liFailures ? ` · ${hcpStatus.liFailures} failed` : ""}${hcpStatus.descFilled ? ` · ${hcpStatus.descFilled} descriptions filled` : ""}`}
+                      : `${hcpStatus.phase || "…"} · ${(hcpStatus.jobsSeen || 0).toLocaleString()} jobs · ${(hcpStatus.liFetched || 0).toLocaleString()} line-item sets · ${(hcpStatus.merged || 0).toLocaleString()} merged${hcpStatus.created ? ` · ${hcpStatus.created.toLocaleString()} jobs created from HCP` : ""}${hcpStatus.liFailures ? ` · ${hcpStatus.liFailures} failed` : ""}${hcpStatus.descFilled ? ` · ${hcpStatus.descFilled} descriptions filled` : ""}${hcpStatus.estimates ? ` · ${hcpStatus.estimates.toLocaleString()} estimates synced` : ""}${hcpStatus.estimatesError ? ` · ⚠ estimates: ${hcpStatus.estimatesError}` : ""}`}
                   </p>
                 )}
               </div>
