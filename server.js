@@ -20,7 +20,7 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const DATA_FILE = path.join(DATA_DIR, "mplr-kpi-data.json");
 
-const SERVER_BUILD = 60;
+const SERVER_BUILD = 61;
 
 /* ================= HCP DIRECT SYNC =================
    Pulls every job + its line items straight from the Housecall Pro API.
@@ -90,11 +90,31 @@ async function runHcpSync() {
     const byJid = new Map(jobs.map((j) => [String(j.jid), j]));
     const byBase = new Map();
     for (const j of jobs) { const b = String(j.jid).split("-")[0]; if (!byBase.has(b)) byBase.set(b, j); }
+    const apiByJid = new Map();
+    for (const aj of apiJobs) { const k = String(aj.invoice_number || aj.id || "").trim(); if (k) apiByJid.set(k, aj); }
     for (const [jid, entry] of Object.entries(liByJid)) {
       const tgt = byJid.get(jid) || byJid.get(jid.replace(/-.*$/, "")) || byBase.get(jid.split("-")[0]);
       if (!tgt) continue;
       if (entry.items.length) { tgt.li = entry.items; tgt.hid = entry.hid; syncState.merged++; }
       if (!tgt.jd && descByJid[jid]) { tgt.jd = descByJid[jid]; syncState.descFilled++; }
+    }
+    /* refresh payment state on EXISTING rows so jobs that get paid after
+       first sight update themselves — no sheet needed. Exact paid dates
+       from a sheet upload are never overwritten, only filled when absent. */
+    for (const [jid, aj] of apiByJid) {
+      const tgt = byJid.get(jid) || byJid.get(jid.replace(/-.*$/, "")) || byBase.get(jid.split("-")[0]);
+      if (!tgt) continue;
+      const total = centsToDollars(aj.total_amount);
+      const out = centsToDollars(aj.outstanding_balance);
+      if (total > 0) { tgt.amt = total; tgt.paidAmt = Math.max(0, total - out); }
+      const nowPaid = total > 0 && out <= 0;
+      if (nowPaid && !tgt.pd) {
+        const doneAt = (aj.work_timestamps && String(aj.work_timestamps.completed_at || "").slice(0, 10)) || null;
+        tgt.pd = doneAt || String(aj.created_at || "").slice(0, 10) || tgt.d;
+        syncState.paidUpdated = (syncState.paidUpdated || 0) + 1;
+      }
+      if (/complete/i.test(String(aj.work_status || ""))) tgt.done = true;
+      if (!tgt.hid) tgt.hid = aj.id;
     }
     /* UPSERT: any API job the store doesn't have gets created outright, so
        the sync can rebuild from zero — a cleared sheet is no longer fatal.
