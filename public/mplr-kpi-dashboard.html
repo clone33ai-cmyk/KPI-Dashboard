@@ -1612,7 +1612,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 63</div>
+            <div className="sub">KPI Dashboard · build 64</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -2436,7 +2436,7 @@ function App() {
                   <p className="note" style={{ marginTop: 8, color: hcpStatus.error ? C.red : C.dim, fontFamily: "monospace", fontSize: 12 }}>
                     {hcpStatus.error
                       ? `⚠ ${hcpStatus.error}${hcpStatus.authHint ? " — " + hcpStatus.authHint : ""}`
-                      : `${hcpStatus.phase || "…"} · ${(hcpStatus.jobsSeen || 0).toLocaleString()} jobs · ${(hcpStatus.liFetched || 0).toLocaleString()} line-item sets · ${(hcpStatus.merged || 0).toLocaleString()} merged${hcpStatus.liFailures ? ` · ${hcpStatus.liFailures} failed` : ""}${hcpStatus.descFilled ? ` · ${hcpStatus.descFilled} descriptions filled` : ""}`}
+                      : `${hcpStatus.phase || "…"} · ${(hcpStatus.jobsSeen || 0).toLocaleString()} jobs · ${(hcpStatus.liFetched || 0).toLocaleString()} line-item sets · ${(hcpStatus.merged || 0).toLocaleString()} merged${hcpStatus.created ? ` · ${hcpStatus.created.toLocaleString()} jobs created from HCP` : ""}${hcpStatus.liFailures ? ` · ${hcpStatus.liFailures} failed` : ""}${hcpStatus.descFilled ? ` · ${hcpStatus.descFilled} descriptions filled` : ""}`}
                   </p>
                 )}
               </div>
