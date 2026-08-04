@@ -275,12 +275,16 @@ function jobCategory(desc, amt) {
   if (/drain (and|&|n)? ?seal|seal restoration|leak seal|underwater seal|drain pool|drenar/.test(s)) return "Drain & Seal";
   if (/equipment (diagnostic|inspection)|diagnostic service/.test(s)) return "Equipment Inspection";
   if (/pump|filter|heater|motor|salt cell|actuator|booster|automation|equipment (repair|install|replace)/.test(s)) return "Equipment";
-  if (/pipe repair|under the dirt|underground|excavat|re-?route|skimmer/.test(s)) return "Pipe/Skimmer Repair";
+  if (/deco ?seal/.test(s)) return "Deco Seal";
+  if (/new concrete|demo(lish)? concrete|concrete demo|concrete pool deck/.test(s)) return "Concrete Pool Deck";
+  if (/under the deck|under deck/.test(s)) return "Under The Deck Repair";
+  if (/under the dirt|under dirt/.test(s)) return "Under The Dirt Repair";
+  if (/pipe repair|underground|excavat|re-?route|skimmer/.test(s)) return "Pipe/Skimmer Repair";
   if (/structural|pier|crack|epoxy|injection/.test(s)) return "Structural";
   if (/plaster|resurfac|pebble|fiberglass|gel ?coat/.test(s)) return "Plaster/Resurface";
   if (/remodel/.test(s)) return "Remodel";
   if (/tile|coping/.test(s)) return "Tile & Coping";
-  if (/\bdeck|deco ?seal/.test(s)) return "Deck";
+  if (/\bdeck/.test(s)) return "Under The Deck Repair";
   if (/light/.test(s)) return "Lighting";
   if (/ld notes|leak repair|3 year no leak/.test(s)) return "Leak Repair";
   if (/leak detect|detection|leak diagnosis|water feature test/.test(s)) {
@@ -301,7 +305,10 @@ function jobCategory(desc, amt) {
 function liCategory(name, amt) {
   const s = String(name || "").toLowerCase();
   if (!s) return "Other";
-  if (/deco seal/.test(s)) return "Deck";
+  if (/deco ?seal/.test(s)) return "Deco Seal";
+  if (/new concrete|demo(lish)? concrete|concrete demo|concrete pool deck/.test(s)) return "Concrete Pool Deck";
+  if (/under the deck|under deck/.test(s)) return "Under The Deck Repair";
+  if (/under the dirt|under dirt/.test(s)) return "Under The Dirt Repair";
   if (/leak seal|underwater seal|drain (and|&) seal|drain n seal/.test(s)) return "Drain & Seal";
   if (/go.?back/.test(s)) return "Go-Backs";
   if (/diagnostic service/.test(s)) return "Equipment Inspection";
@@ -311,11 +318,11 @@ function liCategory(name, amt) {
      office prices whole repairs on lines with detection wording */
   if (/leak detect|detection|leak diagnosis/.test(s)) return amt && amt > 1200 ? "Leak Repair" : "Leak Detection";
   if (/structural|pier/.test(s)) return "Structural";
-  if (/skimmer|underground|under.?dirt|pipe|plumb|conduit/.test(s)) return "Pipe/Skimmer Repair";
+  if (/skimmer|underground|pipe|plumb|conduit/.test(s)) return "Pipe/Skimmer Repair";
   if (/pump|filter|heater|salt|chlorinat|actuator|automation|timer|valve|motor/.test(s)) return "Equipment";
   if (/plaster|pebble|gel ?coat|fiberglass|resurfac/.test(s)) return "Plaster/Resurface";
   if (/tile|coping/.test(s)) return "Tile & Coping";
-  if (/deck/.test(s)) return "Deck";
+  if (/deck/.test(s)) return "Under The Deck Repair";
   if (/light/.test(s)) return "Lighting";
   if (/remodel|renovat/.test(s)) return "Remodel";
   return jobCategory(s, 0);
@@ -799,7 +806,17 @@ function computeStats(data, range, numFilter, manual) {
       if (liSum > 0 && jobRev > 0) {
         catLi++;
         const scale = jobRev / liSum; /* allocate collected dollars pro-rata across the lines */
-        j.li.forEach((x) => { const sc = Math.round((x.amt || 0) * scale); bumpCat(liCategory(x.n, sc), (x.amt || 0) * scale, j.jid, j.svc, { ...j, jd: x.n, amt: sc, paidAmt: sc }); });
+        /* the office doesn't charge for reports/summaries — dollars billed on
+           those lines belong to the actual work. If $0 sibling lines name the
+           work unambiguously, the money follows the work. */
+        const genericDoc = /leak detection report|leak diagnosis|leak detection summary|ld notes/;
+        const zeroCats = [...new Set(j.li.filter((z) => !(z.amt > 0)).map((z) => liCategory(z.n, 0)).filter((cc) => !["Other", "Leak Detection", "Go-Backs", "Documentation", "Equipment Inspection"].includes(cc)))];
+        j.li.forEach((x) => {
+          const sc = Math.round((x.amt || 0) * scale);
+          let cc = liCategory(x.n, sc);
+          if (sc > 0 && genericDoc.test(String(x.n).toLowerCase()) && zeroCats.length === 1) cc = zeroCats[0];
+          bumpCat(cc, (x.amt || 0) * scale, j.jid, j.svc, { ...j, jd: x.n, amt: sc, paidAmt: sc });
+        });
         return;
       }
     }
@@ -953,7 +970,7 @@ function App() {
   };
 
   const allDates = useMemo(
-    () => [...data.calls, ...data.jobs, ...data.ads, ...data.lsa, ...(data.lsabill || [])].map((r) => r.d).sort(),
+    () => [...data.calls, ...data.jobs, ...data.ads, ...data.lsa, ...(data.lsabill || []), ...(data.estimates || [])].map((r) => r.d).sort(),
     [data]
   );
   const range = useMemo(() => {
@@ -1106,7 +1123,8 @@ function App() {
 
   /* open estimates: pending right now, converted-by-phone treated as closed */
   const openEstimates = useMemo(() => {
-    const est = data.estimates || [];
+    const lo = dkey(range[0]), hi = dkey(range[1]);
+    const est = (data.estimates || []).filter((e) => e.d && e.d >= lo && e.d <= hi);
     if (!est.length) return null;
     const phoneIdx = dataIdx._phoneIdx || {};
     const today = Date.now();
@@ -1115,16 +1133,15 @@ function App() {
       if (e.ph && (phoneIdx[e.ph] || []).some((jd) => jd >= e.d)) return false; // job created after → converted
       return true;
     }).map((e) => ({ ...e, age: Math.floor((today - new Date(e.d + "T12:00:00").getTime()) / 86400000) }));
-    /* over 90 days without a decision is not pipeline, it's archaeology */
-    const open = allOpen.filter((e) => e.age <= 90);
-    const dead = allOpen.length - open.length;
+    const open = allOpen;
+    const dead = 0;
     const totalVal = open.reduce((a, e) => a + (e.amt || 0), 0);
     const buckets = { fresh: 0, warm: 0, stale: 0 };
     open.forEach((e) => { if (e.age <= 7) buckets.fresh++; else if (e.age <= 30) buckets.warm++; else buckets.stale++; });
     const phMissing = est.length > 0 && est.every((e) => !e.ph);
     const amtMissing = est.length > 0 && est.every((e) => !e.amt);
     return { open: open.sort((a, b) => a.age - b.age), totalVal, buckets, total: est.length, dead, phMissing, amtMissing };
-  }, [data.estimates, dataIdx]);
+  }, [data.estimates, dataIdx, range]);
 
   /* ---------- insights & recommendations (computed from the data) ---------- */
   const insights = useMemo(() => {
@@ -1616,7 +1633,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 67</div>
+            <div className="sub">KPI Dashboard · build 69</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1689,7 +1706,7 @@ function App() {
                 <div className="panel" style={{ marginTop: 20 }}>
                   <div className="sectionhead" style={{ margin: "0 0 4px", alignItems: "center" }}>
                     <h2 style={{ cursor: "pointer" }} onClick={() => tglClp("est")}>{"▾ "}{estView === "open" ? "Open estimates pipeline" : estView === "won" ? "Won estimates" : "Lost estimates"}</h2>
-                    <small>{estView === "open" ? "right-now snapshot, not filtered by date range" : "newest first, from the estimates upload"}</small>
+                    <small>{estView === "open" ? "estimates created in the selected date range" : "created in the selected date range, newest first"}</small>
                     <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
                       {[["open", "Open"], ["won", "Won"], ["lost", "Lost"]].map(([id, label]) => (
                         <button key={id} className={"chipbtn" + (estView === id ? " on" : "")} onClick={() => setEstView(id)}>{label}</button>
@@ -1698,7 +1715,8 @@ function App() {
                   </div>
                   {estView !== "open" ? (() => {
                     const wanted = estView;
-                    const rowsAll = (data.estimates || []).filter((e) => (e.oc || (e.closed ? "won" : "open")) === wanted).sort((a, b) => (a.d < b.d ? 1 : -1));
+                    const lo = dkey(range[0]), hi = dkey(range[1]);
+                    const rowsAll = (data.estimates || []).filter((e) => e.d && e.d >= lo && e.d <= hi && (e.oc || (e.closed ? "won" : "open")) === wanted).sort((a, b) => (a.d < b.d ? 1 : -1));
                     const shown = showAllEst ? rowsAll : rowsAll.slice(0, 10);
                     const totalVal = rowsAll.reduce((a, e) => a + (e.amt || 0), 0);
                     return (
@@ -1746,7 +1764,7 @@ function App() {
                       <div className="val" style={{ fontSize: 38, margin: "8px 0 2px" }}>
                         {openEstimates.open.length}<span style={{ fontSize: 20, color: C.dim }}> open · ${Math.round(openEstimates.totalVal).toLocaleString()}</span>
                       </div>
-                      <p className="note" style={{ marginBottom: 10 }}>estimates from the last 90 days still waiting on a yes or no</p>
+                      <p className="note" style={{ marginBottom: 10 }}>created in this date range, still waiting on a yes or no</p>
                       {openEstimates.amtMissing && (
                         <div className="card" style={{ borderLeftColor: C.red, marginBottom: 10 }}>
                           <div className="mname">Estimates upload is missing the Open value column</div>
