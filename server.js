@@ -20,7 +20,7 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const DATA_FILE = path.join(DATA_DIR, "mplr-kpi-data.json");
 
-const SERVER_BUILD = 59;
+const SERVER_BUILD = 60;
 
 /* ================= HCP DIRECT SYNC =================
    Pulls every job + its line items straight from the Housecall Pro API.
@@ -44,7 +44,7 @@ function centsToDollars(v) { const n = Number(v); return Number.isFinite(n) ? Ma
 
 async function runHcpSync() {
   syncState.running = true;
-  Object.assign(syncState, { startedAt: new Date().toISOString(), finishedAt: null, phase: "listing jobs", pages: 0, jobsSeen: 0, liFetched: 0, liFailures: 0, merged: 0, created: 0, descFilled: 0, error: null, authHint: null });
+  Object.assign(syncState, { startedAt: new Date().toISOString(), finishedAt: null, phase: "listing jobs", pages: 0, jobsSeen: 0, liFetched: 0, liFailures: 0, merged: 0, created: 0, descFilled: 0, estimates: 0, estimatesError: null, error: null, authHint: null });
   try {
     const apiJobs = [];
     for (let page = 1; page < 500; page++) {
@@ -121,8 +121,43 @@ async function runHcpSync() {
       if (nj.d) { jobs.push(nj); byJid.set(jid, nj); syncState.created++; }
     }
     d.jobs = jobs.sort((a, b) => (a.d < b.d ? -1 : 1));
+    /* ============ estimates straight from HCP ============ */
+    syncState.phase = "syncing estimates";
+    const apiEst = [];
+    try {
+      for (let page = 1; page < 300; page++) {
+        const body = await hcpFetch(`/estimates?page=${page}&page_size=100`);
+        const list = body.estimates || body.data || (Array.isArray(body) ? body : []);
+        if (!list.length) break;
+        for (const e of list) apiEst.push(e);
+        if (body.total_pages && page >= body.total_pages) break;
+      }
+      const mapped = apiEst.map((e) => {
+        const opts = Array.isArray(e.options) ? e.options : [];
+        const statuses = opts.map((o) => String(o.approval_status || "").toLowerCase());
+        const approved = opts.find((o, i) => statuses[i] === "approved" || statuses[i] === "pro approved");
+        const declinedAll = opts.length > 0 && statuses.every((s) => s.includes("declin"));
+        const pick = approved || opts.reduce((a, b) => (centsToDollars(b.total_amount) > centsToDollars(a && a.total_amount || 0) ? b : a), opts[0]) || null;
+        const cust = e.customer || {};
+        const oc = approved ? "won" : declinedAll ? "lost" : "open";
+        return {
+          eid: String(e.estimate_number || e.id || "").trim(),
+          d: String(e.created_at || "").slice(0, 10) || null,
+          amt: pick ? centsToDollars(pick.total_amount) : 0,
+          nm: [cust.first_name, cust.last_name].filter(Boolean).join(" ") || "",
+          ph: String(cust.mobile_number || cust.home_number || cust.work_number || "").replace(/\D/g, "").slice(-10),
+          st: (pick && pick.approval_status) || e.work_status || "submitted",
+          oc, closed: oc !== "open",
+          hid: e.id,
+        };
+      }).filter((x) => x.eid && x.d);
+      if (mapped.length) { d.estimates = mapped; syncState.estimates = mapped.length; }
+    } catch (e) {
+      if (e.auth) throw e;
+      syncState.estimatesError = e.message; /* estimates endpoint problems never sink the job sync */
+    }
     d.meta = d.meta || {};
-    d.meta.hcpSync = { at: new Date().toISOString(), jobs: apiJobs.length, withLineItems: syncState.merged };
+    d.meta.hcpSync = { at: new Date().toISOString(), jobs: apiJobs.length, withLineItems: syncState.merged, estimates: syncState.estimates || 0 };
     saveData(d);
     syncState.phase = "done";
   } catch (e) {
@@ -133,6 +168,25 @@ async function runHcpSync() {
     syncState.finishedAt = new Date().toISOString();
   }
 }
+
+/* nightly auto-sync at 2:00 AM Central, so nobody uploads sheets daily */
+function msUntil2amCT() {
+  const nowCT = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
+  const next = new Date(nowCT);
+  next.setHours(2, 0, 0, 0);
+  if (next <= nowCT) next.setDate(next.getDate() + 1);
+  return Math.max(60000, next - nowCT);
+}
+function scheduleNightlySync() {
+  if (!HCP_KEY) return;
+  const ms = msUntil2amCT();
+  syncState.nextAutoSync = new Date(Date.now() + ms).toISOString();
+  setTimeout(async () => {
+    try { if (!syncState.running) await runHcpSync(); } catch (e) { /* recorded in syncState */ }
+    scheduleNightlySync();
+  }, ms);
+}
+scheduleNightlySync();
 
 app.post("/api/hcp/sync", (req, res) => {
   if (!HCP_KEY) return res.status(400).json({ error: "HCP_API_KEY is not set on the server. Add it in Railway → Variables and redeploy." });
