@@ -1208,6 +1208,8 @@ function App() {
   const [openEstRow, setOpenEstRow] = useState(null);
   const [estAgeFilter, setEstAgeFilter] = useState("all");
   const [estView, setEstView] = useState("open");
+  const [clp, setClp] = useState({});
+  const tglClp = (k) => setClp((c) => ({ ...c, [k]: !c[k] }));
   const [showAllEst, setShowAllEst] = useState(false);
   const [openCallRow, setOpenCallRow] = useState(null);
   const [showAllCalls, setShowAllCalls] = useState(false);
@@ -1544,7 +1546,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 59</div>
+            <div className="sub">KPI Dashboard · build 60</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1592,10 +1594,31 @@ function App() {
             </div>
           ) : (
             <>
+              <div className="gauge">
+                <div className="pool" role="img" aria-label={`Overall health ${health.pct} percent`}>
+                  <div className="water" style={{ height: `${health.pct}%` }} />
+                  <div className="pct">{health.pct}%</div>
+                </div>
+                <div className="gaugeInfo">
+                  <b>Waterline: overall health</b>
+                  <div className="note">{cur.counts.calls.toLocaleString()} calls · {cur.values.leadsTotal || 0} new leads · {cur.counts.jobs} paid jobs in this range</div>
+                  <div className="pills">
+                    <span className="pill" style={{ background: C.green }}>{health.g} green</span>
+                    <span className="pill" style={{ background: C.yellow, color: "#fff" }}>{health.y} yellow</span>
+                    <span className="pill" style={{ background: C.red }}>{health.r} red</span>
+                  </div>
+                </div>
+              </div>
+
+              {clp.est ? (openEstimates && (
+                <div className="panel" style={{ marginTop: 20, cursor: "pointer" }} onClick={() => tglClp("est")}>
+                  <div className="sectionhead" style={{ margin: 0 }}><h2>▸ Open estimates pipeline</h2><small>{openEstimates.open.length} open · tap to expand</small></div>
+                </div>
+              )) : (<>
               {openEstimates && (
                 <div className="panel" style={{ marginTop: 20 }}>
                   <div className="sectionhead" style={{ margin: "0 0 4px", alignItems: "center" }}>
-                    <h2>{estView === "open" ? "Open estimates pipeline" : estView === "won" ? "Won estimates" : "Lost estimates"}</h2>
+                    <h2 style={{ cursor: "pointer" }} onClick={() => tglClp("est")}>{"▾ "}{estView === "open" ? "Open estimates pipeline" : estView === "won" ? "Won estimates" : "Lost estimates"}</h2>
                     <small>{estView === "open" ? "right-now snapshot, not filtered by date range" : "newest first, from the estimates upload"}</small>
                     <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
                       {[["open", "Open"], ["won", "Won"], ["lost", "Lost"]].map(([id, label]) => (
@@ -1741,6 +1764,12 @@ function App() {
                   )}
                 </div>
               )}
+              </>)}
+              {clp.mc ? ((cur.missedOps || []).length > 0 && (
+                <div className="panel" style={{ marginTop: 20, cursor: "pointer" }} onClick={() => tglClp("mc")}>
+                  <div className="sectionhead" style={{ margin: 0 }}><h2>▸ What those missed calls cost</h2><small>tap to expand</small></div>
+                </div>
+              )) : (<>
               {(cur.missedOps || []).length > 0 && (() => {
                 const n = cur.missedOps.length;
                 const convPct = cur.values.bookingRate || 0;
@@ -1751,7 +1780,7 @@ function App() {
                 const money = (x) => "$" + Math.round(x).toLocaleString();
                 return (
                   <div className="panel" style={{ marginTop: 20 }}>
-                    <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>What those missed calls cost</h2><small>estimated from this range's own numbers</small></div>
+                    <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2 style={{ cursor: "pointer" }} onClick={() => tglClp("mc")}>▾ What those missed calls cost</h2><small>estimated from this range's own numbers</small></div>
                     <div className="val" style={{ fontSize: 40, margin: "8px 0 2px", fontWeight: 800, color: C.ink }}>{money(est)}</div>
                     <p className="note" style={{ marginBottom: 10 }}>estimated revenue missed because these callers never got picked up</p>
                     <div className="srcrow"><span className="note" style={{ minWidth: 200 }}>Lost callers (list above)</span><span style={{ fontWeight: 600 }}>{n}</span></div>
@@ -1794,9 +1823,15 @@ function App() {
                   </div>
                 );
               })()}
+              </>)}
+              {clp.cb ? ((cur.missedOps || []).length > 0 && (
+                <div className="panel" style={{ marginTop: 20, cursor: "pointer" }} onClick={() => tglClp("cb")}>
+                  <div className="sectionhead" style={{ margin: 0 }}><h2>▸ Callback list: never reached you</h2><small>{cur.missedOps.length} lost callers · tap to expand</small></div>
+                </div>
+              )) : (<>
               {(cur.missedOps || []).length > 0 && (
                 <div className="panel" style={{ marginTop: 20 }}>
-                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Callback list: never reached you</h2><small>{cur.missedOps.length} lost callers, newest first</small></div>
+                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2 style={{ cursor: "pointer" }} onClick={() => tglClp("cb")}>▾ Callback list: never reached you</h2><small>{cur.missedOps.length} lost callers, newest first</small></div>
                   <p className="note" style={{ marginBottom: 8 }}>One row per caller. Missed in this range, never got answered on any later call, never became a job. Callers who tried again and got through are excluded.</p>
                   {(showAllCalls ? cur.missedOps : cur.missedOps.slice(0, 15)).map((m, i) => {
                     const isOpen = openCallRow === m.ph;
@@ -1836,23 +1871,13 @@ function App() {
                 </div>
               )}
 
-              <div className="gauge">
-                <div className="pool" role="img" aria-label={`Overall health ${health.pct} percent`}>
-                  <div className="water" style={{ height: `${health.pct}%` }} />
-                  <div className="pct">{health.pct}%</div>
+              </>)}
+              {clp.recs ? (
+                <div className="panel" style={{ marginTop: 20, cursor: "pointer" }} onClick={() => tglClp("recs")}>
+                  <div className="sectionhead" style={{ margin: 0 }}><h2>▸ Recommendations</h2><small>tap to expand</small></div>
                 </div>
-                <div className="gaugeInfo">
-                  <b>Waterline: overall health</b>
-                  <div className="note">{cur.counts.calls.toLocaleString()} calls · {cur.values.leadsTotal || 0} new leads · {cur.counts.jobs} paid jobs in this range</div>
-                  <div className="pills">
-                    <span className="pill" style={{ background: C.green }}>{health.g} green</span>
-                    <span className="pill" style={{ background: C.yellow, color: "#fff" }}>{health.y} yellow</span>
-                    <span className="pill" style={{ background: C.red }}>{health.r} red</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="sectionhead"><h2>Recommendations</h2><small>generated from this period's data</small></div>
+              ) : (<>
+              <div className="sectionhead"><h2 style={{ cursor: "pointer" }} onClick={() => tglClp("recs")}>▾ Recommendations</h2><small>generated from this period's data</small></div>
               {insights.length === 0 && <p className="note">Nothing flagged for this range. Widen the date range for more signal.</p>}
               {insights.map((ins, i) => (
                 <div key={i} className="card" style={{ borderLeftColor: ins.sev === "red" ? C.red : ins.sev === "yellow" ? C.yellow : C.green, marginBottom: 10 }}>
@@ -1865,6 +1890,7 @@ function App() {
                 </div>
               ))}
 
+              </>)}
             </>
           )
         )}
