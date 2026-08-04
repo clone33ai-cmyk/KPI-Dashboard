@@ -20,7 +20,101 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const DATA_FILE = path.join(DATA_DIR, "mplr-kpi-data.json");
 
-const SERVER_BUILD = 55;
+const SERVER_BUILD = 56;
+
+/* ================= HCP DIRECT SYNC =================
+   Pulls every job + its line items straight from the Housecall Pro API.
+   Needs env var HCP_API_KEY (Railway → Variables). */
+const HCP_KEY = process.env.HCP_API_KEY || "";
+const HCP_BASE = "https://api.housecallpro.com";
+const syncState = { running: false, startedAt: null, finishedAt: null, phase: "", pages: 0, jobsSeen: 0, liFetched: 0, liFailures: 0, merged: 0, descFilled: 0, error: null, authHint: null };
+
+async function hcpFetch(path, tries = 3) {
+  for (let a = 1; a <= tries; a++) {
+    const r = await fetch(HCP_BASE + path, { headers: { Authorization: "Bearer " + HCP_KEY, Accept: "application/json" } });
+    if (r.status === 429 || r.status >= 500) { await new Promise((res) => setTimeout(res, 1200 * a)); continue; }
+    if (r.status === 401 || r.status === 403) { const e = new Error("HCP rejected the API key (HTTP " + r.status + ")"); e.auth = true; throw e; }
+    if (!r.ok) throw new Error("HCP " + path.split("?")[0] + " → HTTP " + r.status);
+    return r.json();
+  }
+  throw new Error("HCP kept rate-limiting " + path.split("?")[0]);
+}
+
+function centsToDollars(v) { const n = Number(v); return Number.isFinite(n) ? Math.round(n) / 100 : 0; }
+
+async function runHcpSync() {
+  syncState.running = true;
+  Object.assign(syncState, { startedAt: new Date().toISOString(), finishedAt: null, phase: "listing jobs", pages: 0, jobsSeen: 0, liFetched: 0, liFailures: 0, merged: 0, descFilled: 0, error: null, authHint: null });
+  try {
+    const apiJobs = [];
+    for (let page = 1; page < 500; page++) {
+      const body = await hcpFetch(`/jobs?page=${page}&page_size=100`);
+      const list = body.jobs || body.data || (Array.isArray(body) ? body : []);
+      if (!list.length) break;
+      syncState.pages = page; 
+      for (const j of list) apiJobs.push(j);
+      syncState.jobsSeen = apiJobs.length;
+      if (body.total_pages && page >= body.total_pages) break;
+    }
+    syncState.phase = "fetching line items";
+    const liByJid = {};
+    const descByJid = {};
+    let idx = 0;
+    const workers = Array.from({ length: 5 }, async () => {
+      while (idx < apiJobs.length) {
+        const j = apiJobs[idx++];
+        const jid = String(j.invoice_number || j.id || "").trim();
+        if (!jid) continue;
+        if (j.description) descByJid[jid] = String(j.description).slice(0, 90);
+        try {
+          let items = Array.isArray(j.line_items) ? j.line_items : null;
+          if (!items) {
+            const body = await hcpFetch(`/jobs/${j.id}/line_items`);
+            items = body.data || body.line_items || (Array.isArray(body) ? body : []);
+          }
+          liByJid[jid] = (items || []).map((li) => ({
+            n: String(li.name || li.description || "item").slice(0, 80),
+            amt: li.amount != null ? centsToDollars(li.amount) : centsToDollars(li.unit_price) * (Number(li.quantity) || 1),
+          })).filter((x) => x.n);
+          syncState.liFetched++;
+        } catch (e) {
+          if (e.auth) throw e;
+          syncState.liFailures++;
+        }
+      }
+    });
+    await Promise.all(workers);
+    syncState.phase = "merging into the dashboard data";
+    const d = loadData();
+    const jobs = d.jobs || [];
+    const byJid = new Map(jobs.map((j) => [String(j.jid), j]));
+    for (const [jid, items] of Object.entries(liByJid)) {
+      const tgt = byJid.get(jid) || byJid.get(jid.replace(/-.*$/, ""));
+      if (!tgt) continue;
+      if (items.length) { tgt.li = items; syncState.merged++; }
+      if (!tgt.jd && descByJid[jid]) { tgt.jd = descByJid[jid]; syncState.descFilled++; }
+    }
+    d.meta = d.meta || {};
+    d.meta.hcpSync = { at: new Date().toISOString(), jobs: apiJobs.length, withLineItems: syncState.merged };
+    saveData(d);
+    syncState.phase = "done";
+  } catch (e) {
+    syncState.error = e.message;
+    if (e.auth) syncState.authHint = "Add/verify HCP_API_KEY in Railway → Variables, then redeploy.";
+  } finally {
+    syncState.running = false;
+    syncState.finishedAt = new Date().toISOString();
+  }
+}
+
+app.post("/api/hcp/sync", (req, res) => {
+  if (!HCP_KEY) return res.status(400).json({ error: "HCP_API_KEY is not set on the server. Add it in Railway → Variables and redeploy." });
+  if (syncState.running) return res.json({ started: false, alreadyRunning: true });
+  runHcpSync();
+  res.json({ started: true });
+});
+app.get("/api/hcp/sync/status", (req, res) => res.json(syncState));
+
 app.use(express.json({ limit: "100mb" }));
 
 /* ---------------- basic auth ---------------- */
@@ -133,7 +227,7 @@ app.post("/api/data", (req, res) => {
 });
 app.get("/api/health", (req, res) => {
   const d = loadData();
-  res.json({ ok: true, serverBuild: SERVER_BUILD, uploadLimit: "100mb", lastUpdated: d.meta.lastUpdated || null, aiGrading: !!process.env.ANTHROPIC_API_KEY, pendingAiGrades: d.kathy.filter((r) => !r.ai && r.cid && r.tx).length, kathyAiError: d.meta.kathyAiError || null });
+  res.json({ ok: true, serverBuild: SERVER_BUILD, uploadLimit: "100mb", hcpSyncConfigured: !!HCP_KEY, lastUpdated: d.meta.lastUpdated || null, aiGrading: !!process.env.ANTHROPIC_API_KEY, pendingAiGrades: d.kathy.filter((r) => !r.ai && r.cid && r.tx).length, kathyAiError: d.meta.kathyAiError || null });
 });
 
 app.use(express.static(path.join(__dirname, "public")));
