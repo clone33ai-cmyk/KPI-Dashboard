@@ -275,6 +275,7 @@ function jobCategory(desc, amt) {
   if (/drain (and|&|n)? ?seal|seal restoration|leak seal|underwater seal|drain pool|drenar/.test(s)) return "Drain & Seal";
   if (/equipment (diagnostic|inspection)|diagnostic service/.test(s)) return "Equipment Inspection";
   if (/pump|filter|heater|motor|salt cell|actuator|booster|automation|equipment (repair|install|replace)/.test(s)) return "Equipment";
+  if (/bond beam/.test(s)) return "Pool Bond Beam Repair";
   if (/deco ?seal/.test(s)) return "Deco Seal";
   if (/new concrete|demo(lish)? concrete|concrete demo|concrete pool deck/.test(s)) return "Concrete Pool Deck";
   if (/under the deck|under deck/.test(s)) return "Under The Deck Repair";
@@ -305,6 +306,7 @@ function jobCategory(desc, amt) {
 function liCategory(name, amt) {
   const s = String(name || "").toLowerCase();
   if (!s) return "Other";
+  if (/bond beam/.test(s)) return "Pool Bond Beam Repair";
   if (/deco ?seal/.test(s)) return "Deco Seal";
   if (/new concrete|demo(lish)? concrete|concrete demo|concrete pool deck/.test(s)) return "Concrete Pool Deck";
   if (/under the deck|under deck/.test(s)) return "Under The Deck Repair";
@@ -820,7 +822,7 @@ function computeStats(data, range, numFilter, manual) {
         return;
       }
     }
-    bumpCat(jobCategory(j.jd, j.amt), jobRev, j.jid, j.svc, j);
+    bumpCat(jobCategory(j.jd, j.amt), jobRev, j.jid, j.svc, { ...j, noLi: true });
   });
 
   return {
@@ -1633,7 +1635,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 69</div>
+            <div className="sub">KPI Dashboard · build 70</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -2043,6 +2045,7 @@ function App() {
                                     <div key={i} className="srcrow" style={{ borderBottom: i === Math.min(members.length, catMore[c] ? members.length : 15) - 1 ? "none" : undefined }}>
                                       <span className="note" style={{ minWidth: 78 }}>{j.pd || j.d}</span>
                                       <span className="note">{j.hid ? <a href={`https://pro.housecallpro.com/app/jobs/${j.hid}`} target="_blank" rel="noreferrer" style={{ color: C.goldSoft, textDecoration: "underline" }}>#{j.jid || "—"}</a> : `#${j.jid || "—"}`}</span>
+                                      {j.noLi && <span className="pill" style={{ background: C.line, color: C.dim, fontSize: 10 }}>no line items synced</span>}
                                       <span style={{ fontWeight: 700 }}>${Math.round(j.paidAmt != null ? j.paidAmt : j.amt).toLocaleString()}</span>
                                       <span className="note" style={{ flex: "1 1 200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{j.jd || "(no description in HCP)"}</span>
                                     </div>
