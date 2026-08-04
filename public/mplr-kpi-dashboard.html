@@ -295,6 +295,28 @@ function jobCategory(desc, amt) {
   return s ? "Other" : "No description";
 }
 
+/* line-item categorizer: price-book names are specific, so no amount
+   gate is needed — the $375 detection line IS detection, the seal line
+   IS the seal job. Falls back to the description rules for odd names. */
+function liCategory(name) {
+  const s = String(name || "").toLowerCase();
+  if (!s) return "Other";
+  if (/deco seal/.test(s)) return "Deck";
+  if (/leak seal|underwater seal|drain (and|&) seal|drain n seal/.test(s)) return "Drain & Seal";
+  if (/go.?back/.test(s)) return "Go-Backs";
+  if (/diagnostic service/.test(s)) return "Equipment Inspection";
+  if (/leak detect|detection|leak diagnosis|water feature test|dye test/.test(s)) return "Leak Detection";
+  if (/structural|pier/.test(s)) return "Structural";
+  if (/skimmer|underground|under.?dirt|pipe|plumb|conduit/.test(s)) return "Pipe/Skimmer Repair";
+  if (/pump|filter|heater|salt|chlorinat|actuator|automation|timer|valve|motor/.test(s)) return "Equipment";
+  if (/plaster|pebble|gel ?coat|fiberglass|resurfac/.test(s)) return "Plaster/Resurface";
+  if (/tile|coping/.test(s)) return "Tile & Coping";
+  if (/deck/.test(s)) return "Deck";
+  if (/light/.test(s)) return "Lighting";
+  if (/remodel|renovat/.test(s)) return "Remodel";
+  return jobCategory(s, 0);
+}
+
 function computeKathy(rows, [a, b]) {
   const inR = (rows || []).filter((r) => { const t = new Date(r.d + "T12:00:00"); return t >= a && t <= b; });
   const out = { screened: inR.length, real: 0, realTransferred: 0, realFailed: 0, realMissed: 0, spamBlocked: 0, spamPassed: 0, unknown: 0, missedList: [], failedList: [], passedList: [] };
@@ -754,12 +776,24 @@ function computeStats(data, range, numFilter, manual) {
     if (isJob && svc) { catPerf[c].svc += svc; catPerf[c].svcJobs++; }
     if (isJob && jref) catPerf[c].members.push(jref);
   };
+  let catLi = 0, catTot = 0;
   revenueJobs.forEach((j) => {
     const jobRev = j.paidAmt != null ? j.paidAmt : j.amt;
+    catTot++;
+    if (j.li && j.li.length) {
+      const liSum = j.li.reduce((a, x) => a + (x.amt || 0), 0);
+      if (liSum > 0 && jobRev > 0) {
+        catLi++;
+        const scale = jobRev / liSum; /* allocate collected dollars pro-rata across the lines */
+        j.li.forEach((x, xi) => bumpCat(liCategory(x.n), (x.amt || 0) * scale, xi === 0, xi === 0 ? j.svc : 0, { ...j, jd: x.n, amt: Math.round((x.amt || 0) * scale) }));
+        return;
+      }
+    }
     bumpCat(jobCategory(j.jd, j.amt), jobRev, true, j.svc, j);
   });
 
   return {
+    catLi, catTot,
     srcPerf,
     catPerf,
     missedOps,
@@ -1209,6 +1243,27 @@ function App() {
   const [estAgeFilter, setEstAgeFilter] = useState("all");
   const [estView, setEstView] = useState("open");
   const [clp, setClp] = useState({});
+  const [hcpStatus, setHcpStatus] = useState(null);
+  const [hcpBusy, setHcpBusy] = useState(false);
+  const startHcpSync = async () => {
+    setHcpBusy(true);
+    try {
+      const r = await fetch("/api/hcp/sync", { method: "POST" }).then((x) => x.json());
+      if (r.error) { setHcpStatus({ error: r.error }); setHcpBusy(false); return; }
+      const poll = async () => {
+        const st = await fetch("/api/hcp/sync/status").then((x) => x.json()).catch(() => null);
+        if (st) setHcpStatus(st);
+        if (st && !st.running && st.finishedAt) {
+          setHcpBusy(false);
+          const d = await fetch("/api/data").then((x) => x.json()).catch(() => null);
+          if (d) setData((prev) => ({ ...prev, ...d, _phoneIdx: buildPhoneIndex(d.jobs || []) }));
+          return;
+        }
+        setTimeout(poll, 1500);
+      };
+      poll();
+    } catch (e) { setHcpStatus({ error: e.message }); setHcpBusy(false); }
+  };
   const tglClp = (k) => setClp((c) => ({ ...c, [k]: !c[k] }));
   const [showAllEst, setShowAllEst] = useState(false);
   const [openCallRow, setOpenCallRow] = useState(null);
@@ -1546,7 +1601,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 60</div>
+            <div className="sub">KPI Dashboard · build 61</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1903,7 +1958,7 @@ function App() {
             <>
               {Object.keys(cur.catPerf || {}).length > 0 && (
                 <div className="panel" style={{ marginTop: 20 }}>
-                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Sales by service type</h2><small>paid jobs in this date range, categorized from HCP job descriptions</small></div>
+                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Sales by service type</h2><small>paid jobs in this range{cur.catLi > 0 ? ` · ${cur.catLi.toLocaleString()} of ${cur.catTot.toLocaleString()} jobs categorized by true HCP line items` : " · categorized from job descriptions — run the HCP sync on the Data tab for line-item accuracy"}</small></div>
                   {(() => {
                     const nd = cur.catPerf["No description"];
                     const tot = Object.values(cur.catPerf).reduce((a, p) => a + p.revenue, 0);
@@ -2352,6 +2407,26 @@ function App() {
               <input ref={backupRef} type="file" accept=".json" style={{ display: "none" }}
                 onChange={(e) => { const f = e.target.files[0]; if (f) restoreBackup(f); e.target.value = ""; }} />
               <button className="btn ghost" style={{ color: C.goldSoft, borderColor: C.gold }} onClick={() => backupRef.current.click()}>Restore backup</button>
+            </div>
+            {SERVER_MODE && (
+              <div style={{ border: `1px solid ${C.gold}`, borderRadius: 8, padding: "12px 14px", marginBottom: 14, background: C.navy2 }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ flex: "1 1 320px" }}>
+                    <b style={{ color: C.gold }}>HCP direct sync — true line items</b>
+                    <p className="note" style={{ margin: "4px 0 0" }}>Pulls every job and its invoice line items straight from Housecall Pro, so Sales by service type reads the actual work sold instead of guessing from descriptions.{data.meta && data.meta.hcpSync ? ` Last sync: ${new Date(data.meta.hcpSync.at).toLocaleString()} — ${(data.meta.hcpSync.withLineItems || 0).toLocaleString()} jobs with line items.` : ""}</p>
+                  </div>
+                  <button className="btn" disabled={hcpBusy} onClick={startHcpSync}>{hcpBusy ? "Syncing…" : "Sync from HCP"}</button>
+                </div>
+                {hcpStatus && (
+                  <p className="note" style={{ marginTop: 8, color: hcpStatus.error ? C.red : C.dim, fontFamily: "monospace", fontSize: 12 }}>
+                    {hcpStatus.error
+                      ? `⚠ ${hcpStatus.error}${hcpStatus.authHint ? " — " + hcpStatus.authHint : ""}`
+                      : `${hcpStatus.phase || "…"} · ${(hcpStatus.jobsSeen || 0).toLocaleString()} jobs · ${(hcpStatus.liFetched || 0).toLocaleString()} line-item sets · ${(hcpStatus.merged || 0).toLocaleString()} merged${hcpStatus.liFailures ? ` · ${hcpStatus.liFailures} failed` : ""}${hcpStatus.descFilled ? ` · ${hcpStatus.descFilled} descriptions filled` : ""}`}
+                  </p>
+                )}
+              </div>
+            )}
+            <div style={{ display: "none" }}>
             </div>
 
             {uploadMsg && (
