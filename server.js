@@ -20,7 +20,7 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const DATA_FILE = path.join(DATA_DIR, "mplr-kpi-data.json");
 
-const SERVER_BUILD = 56;
+const SERVER_BUILD = 57;
 
 /* ================= HCP DIRECT SYNC =================
    Pulls every job + its line items straight from the Housecall Pro API.
@@ -88,8 +88,10 @@ async function runHcpSync() {
     const d = loadData();
     const jobs = d.jobs || [];
     const byJid = new Map(jobs.map((j) => [String(j.jid), j]));
+    const byBase = new Map();
+    for (const j of jobs) { const b = String(j.jid).split("-")[0]; if (!byBase.has(b)) byBase.set(b, j); }
     for (const [jid, items] of Object.entries(liByJid)) {
-      const tgt = byJid.get(jid) || byJid.get(jid.replace(/-.*$/, ""));
+      const tgt = byJid.get(jid) || byJid.get(jid.replace(/-.*$/, "")) || byBase.get(jid.split("-")[0]);
       if (!tgt) continue;
       if (items.length) { tgt.li = items; syncState.merged++; }
       if (!tgt.jd && descByJid[jid]) { tgt.jd = descByJid[jid]; syncState.descFilled++; }
