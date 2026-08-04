@@ -20,7 +20,7 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const DATA_FILE = path.join(DATA_DIR, "mplr-kpi-data.json");
 
-const SERVER_BUILD = 57;
+const SERVER_BUILD = 58;
 
 /* ================= HCP DIRECT SYNC =================
    Pulls every job + its line items straight from the Housecall Pro API.
@@ -72,10 +72,10 @@ async function runHcpSync() {
             const body = await hcpFetch(`/jobs/${j.id}/line_items`);
             items = body.data || body.line_items || (Array.isArray(body) ? body : []);
           }
-          liByJid[jid] = (items || []).map((li) => ({
+          liByJid[jid] = { hid: j.id, items: (items || []).map((li) => ({
             n: String(li.name || li.description || "item").slice(0, 80),
             amt: li.amount != null ? centsToDollars(li.amount) : centsToDollars(li.unit_price) * (Number(li.quantity) || 1),
-          })).filter((x) => x.n);
+          })).filter((x) => x.n) };
           syncState.liFetched++;
         } catch (e) {
           if (e.auth) throw e;
@@ -90,10 +90,10 @@ async function runHcpSync() {
     const byJid = new Map(jobs.map((j) => [String(j.jid), j]));
     const byBase = new Map();
     for (const j of jobs) { const b = String(j.jid).split("-")[0]; if (!byBase.has(b)) byBase.set(b, j); }
-    for (const [jid, items] of Object.entries(liByJid)) {
+    for (const [jid, entry] of Object.entries(liByJid)) {
       const tgt = byJid.get(jid) || byJid.get(jid.replace(/-.*$/, "")) || byBase.get(jid.split("-")[0]);
       if (!tgt) continue;
-      if (items.length) { tgt.li = items; syncState.merged++; }
+      if (entry.items.length) { tgt.li = entry.items; tgt.hid = entry.hid; syncState.merged++; }
       if (!tgt.jd && descByJid[jid]) { tgt.jd = descByJid[jid]; syncState.descFilled++; }
     }
     d.meta = d.meta || {};
