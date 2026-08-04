@@ -298,14 +298,18 @@ function jobCategory(desc, amt) {
 /* line-item categorizer: price-book names are specific, so no amount
    gate is needed — the $375 detection line IS detection, the seal line
    IS the seal job. Falls back to the description rules for odd names. */
-function liCategory(name) {
+function liCategory(name, amt) {
   const s = String(name || "").toLowerCase();
   if (!s) return "Other";
   if (/deco seal/.test(s)) return "Deck";
   if (/leak seal|underwater seal|drain (and|&) seal|drain n seal/.test(s)) return "Drain & Seal";
   if (/go.?back/.test(s)) return "Go-Backs";
   if (/diagnostic service/.test(s)) return "Equipment Inspection";
-  if (/leak detect|detection|leak diagnosis|water feature test|dye test/.test(s)) return "Leak Detection";
+  /* specific price-book detection lines are detection at any amount */
+  if (/pool (&|and) spa leak detection|pool only leak detection|water feature (test|leak detection)|dye test|\$ ?(375|475|650)/.test(s)) return "Leak Detection";
+  /* generic "Leak Detection Report"-style lines get the amount gate: the
+     office prices whole repairs on lines with detection wording */
+  if (/leak detect|detection|leak diagnosis/.test(s)) return amt && amt > 1200 ? "Leak Repair" : "Leak Detection";
   if (/structural|pier/.test(s)) return "Structural";
   if (/skimmer|underground|under.?dirt|pipe|plumb|conduit/.test(s)) return "Pipe/Skimmer Repair";
   if (/pump|filter|heater|salt|chlorinat|actuator|automation|timer|valve|motor/.test(s)) return "Equipment";
@@ -785,7 +789,7 @@ function computeStats(data, range, numFilter, manual) {
       if (liSum > 0 && jobRev > 0) {
         catLi++;
         const scale = jobRev / liSum; /* allocate collected dollars pro-rata across the lines */
-        j.li.forEach((x, xi) => bumpCat(liCategory(x.n), (x.amt || 0) * scale, xi === 0, xi === 0 ? j.svc : 0, { ...j, jd: x.n, amt: Math.round((x.amt || 0) * scale) }));
+        j.li.forEach((x, xi) => bumpCat(liCategory(x.n, x.amt), (x.amt || 0) * scale, xi === 0, xi === 0 ? j.svc : 0, { ...j, jd: x.n, amt: Math.round((x.amt || 0) * scale) }));
         return;
       }
     }
@@ -1601,7 +1605,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 61</div>
+            <div className="sub">KPI Dashboard · build 62</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1988,7 +1992,7 @@ function App() {
                             <div key={c} style={{ borderBottom: `1px solid ${C.line}` }}>
                               <div className="srcrow" style={{ flexWrap: "wrap", cursor: "pointer", borderBottom: "none" }} onClick={() => setOpenEstRow(isOpen ? null : key)}>
                                 <span style={{ fontWeight: 600, minWidth: 170 }}>{c}</span>
-                                <span className="note">{p.jobs} job{p.jobs === 1 ? "" : "s"} ({tripShare.toFixed(0)}% of trips)</span>
+                                <span className="note">{p.jobs > 0 ? `${p.jobs} job${p.jobs === 1 ? "" : "s"} (${tripShare.toFixed(0)}% of trips)` : `${p.members.length} line item${p.members.length === 1 ? "" : "s"} on mixed jobs`}</span>
                                 <span style={{ fontWeight: 800, color: C.ink }}>${Math.round(p.revenue).toLocaleString()}</span>
                                 <span className="note">avg ${Math.round(p.revenue / Math.max(1, p.jobs)).toLocaleString()}</span>
                                 {profit != null && (
