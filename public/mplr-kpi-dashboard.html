@@ -1544,7 +1544,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 58</div>
+            <div className="sub">KPI Dashboard · build 59</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1578,7 +1578,7 @@ function App() {
         </div>
 
         <nav className="tabs" aria-label="Views">
-          {[["overview", "Overview"], ["scorecard", "Scorecard"], ["compare", "Compare"], ["kathy", "Spam Kathy"], ["trends", "Trends"], ["upload", "Data"]].map(([id, label]) => (
+          {[["overview", "Overview"], ["sales", "Sales"], ["scorecard", "Scorecard"], ["compare", "Compare"], ["kathy", "Spam Kathy"], ["trends", "Trends"], ["upload", "Data"]].map(([id, label]) => (
             <button key={id} className={"tab" + (tab === id ? " on" : "")} onClick={() => setTab(id)}>{label}</button>
           ))}
         </nav>
@@ -1592,214 +1592,6 @@ function App() {
             </div>
           ) : (
             <>
-              <div className="gauge">
-                <div className="pool" role="img" aria-label={`Overall health ${health.pct} percent`}>
-                  <div className="water" style={{ height: `${health.pct}%` }} />
-                  <div className="pct">{health.pct}%</div>
-                </div>
-                <div className="gaugeInfo">
-                  <b>Waterline: overall health</b>
-                  <div className="note">{cur.counts.calls.toLocaleString()} calls · {cur.values.leadsTotal || 0} new leads · {cur.counts.jobs} paid jobs in this range</div>
-                  <div className="pills">
-                    <span className="pill" style={{ background: C.green }}>{health.g} green</span>
-                    <span className="pill" style={{ background: C.yellow, color: "#fff" }}>{health.y} yellow</span>
-                    <span className="pill" style={{ background: C.red }}>{health.r} red</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="sectionhead"><h2>Recommendations</h2><small>generated from this period's data</small></div>
-              {insights.length === 0 && <p className="note">Nothing flagged for this range. Widen the date range for more signal.</p>}
-              {insights.map((ins, i) => (
-                <div key={i} className="card" style={{ borderLeftColor: ins.sev === "red" ? C.red : ins.sev === "yellow" ? C.yellow : C.green, marginBottom: 10 }}>
-                  <div className="top">
-                    <div className="mname">{ins.title}</div>
-                    <span className="chip" style={{ background: ins.sev === "red" ? C.red : ins.sev === "yellow" ? C.yellow : C.green, color: "#fff" }}>{ins.sev === "green" ? "Win" : ins.sev === "red" ? "Act now" : "Watch"}</span>
-                  </div>
-                  <div className="note" style={{ marginTop: 4 }}>{ins.detail}</div>
-                  <div style={{ marginTop: 6, color: C.goldSoft, fontWeight: 600, fontSize: 13.5 }}>→ {ins.action}</div>
-                </div>
-              ))}
-
-              {Object.keys(cur.catPerf || {}).length > 0 && (
-                <div className="panel" style={{ marginTop: 20 }}>
-                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Sales by service type</h2><small>paid jobs in this date range, categorized from HCP job descriptions</small></div>
-                  {(() => {
-                    const nd = cur.catPerf["No description"];
-                    const tot = Object.values(cur.catPerf).reduce((a, p) => a + p.revenue, 0);
-                    if (!nd || !tot || nd.revenue / tot < 0.25) return null;
-                    return (
-                      <p className="note" style={{ color: C.red, fontWeight: 600, marginBottom: 8 }}>
-                        ⚠ ${Math.round(nd.revenue).toLocaleString()} ({Math.round((nd.revenue / tot) * 100)}%) of this revenue has no job description on file HERE, even if HCP shows one. That means the last jobs upload didn't carry the column through. Re-upload the jobs export and READ THE UPLOAD MESSAGE: it will either say "Descriptions captured: X of Y" or name the problem.
-                      </p>
-                    );
-                  })()}
-                  {(() => {
-                    const entries = Object.entries(cur.catPerf).sort((a, b) => b[1].revenue - a[1].revenue);
-                    const totalRev = entries.reduce((a, [, p]) => a + p.revenue, 0);
-                    const totalJobs = entries.reduce((a, [, p]) => a + p.jobs, 0);
-                    const noDesc = cur.catPerf["No description"];
-                    const cpv = parseNum((data.settings || {}).costPerVisit) || 0;
-                    return (
-                      <>
-                        {entries.filter(([c, p]) => p.revenue > 0 || p.jobs > 0).map(([c, p]) => {
-                          const tripShare = totalJobs ? (p.jobs / totalJobs) * 100 : 0;
-                          const revShare = totalRev ? (p.revenue / totalRev) * 100 : 0;
-                          const profit = cpv > 0 ? p.revenue - p.jobs * cpv : null;
-                          const key = "cat-" + c;
-                          const isOpen = openEstRow === key;
-                          const members = (p.members || []).slice().sort((a, b) => (b.paidAmt != null ? b.paidAmt : b.amt) - (a.paidAmt != null ? a.paidAmt : a.amt));
-                          return (
-                            <div key={c} style={{ borderBottom: `1px solid ${C.line}` }}>
-                              <div className="srcrow" style={{ flexWrap: "wrap", cursor: "pointer", borderBottom: "none" }} onClick={() => setOpenEstRow(isOpen ? null : key)}>
-                                <span style={{ fontWeight: 600, minWidth: 170 }}>{c}</span>
-                                <span className="note">{p.jobs} job{p.jobs === 1 ? "" : "s"} ({tripShare.toFixed(0)}% of trips)</span>
-                                <span style={{ fontWeight: 800, color: C.ink }}>${Math.round(p.revenue).toLocaleString()}</span>
-                                <span className="note">avg ${Math.round(p.revenue / Math.max(1, p.jobs)).toLocaleString()}</span>
-                                {profit != null && (
-                                  <span style={{ fontWeight: 800, color: profit >= 0 ? C.green : C.red }}>
-                                    {profit >= 0 ? "+" : "−"}${Math.abs(Math.round(profit)).toLocaleString()} est. profit
-                                  </span>
-                                )}
-                                <span style={{ marginLeft: "auto", color: C.goldSoft, fontWeight: 600 }}>{revShare.toFixed(1)}%</span>
-                                <span className="note" style={{ width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
-                              </div>
-                              {isOpen && (
-                                <div style={{ padding: "0 6px 12px", fontSize: 13 }}>
-                                  {members.slice(0, 15).map((j, i) => (
-                                    <div key={i} className="srcrow" style={{ borderBottom: i === Math.min(members.length, 15) - 1 ? "none" : undefined }}>
-                                      <span className="note" style={{ minWidth: 78 }}>{j.d}</span>
-                                      <span className="note">#{j.jid || "—"}</span>
-                                      <span style={{ fontWeight: 700 }}>${Math.round(j.paidAmt != null ? j.paidAmt : j.amt).toLocaleString()}</span>
-                                      <span className="note" style={{ flex: "1 1 200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{j.jd || "(no description in HCP)"}</span>
-                                    </div>
-                                  ))}
-                                  {members.length > 15 && <p className="note" style={{ marginTop: 6 }}>+ {members.length - 15} more in this category</p>}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 12, padding: "10px 6px", borderTop: `1px solid ${C.line}` }}>
-                          <span className="note" style={{ fontWeight: 600 }}>Profit model — your all-in cost per job visit (tech time, truck, overhead): $</span>
-                          <input
-                            type="number" min="0" step="5"
-                            defaultValue={(data.settings || {}).costPerVisit || ""}
-                            onBlur={(ev) => { const v = parseNum(ev.target.value) || 0; if (v !== (parseNum((data.settings || {}).costPerVisit) || 0)) persist({ ...data, settings: { ...(data.settings || {}), costPerVisit: v } }); }}
-                            style={{ width: 90, background: C.navy3, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 4, padding: "6px 8px", font: "inherit" }}
-                          />
-                          <span className="note" style={{ flex: "1 1 240px" }}>
-                            {cpv > 0
-                              ? `Estimated profit = collected revenue − ${"$" + cpv}/visit × jobs. A modeled number with one honest assumption; a category in red is paying you less than the trips cost.`
-                              : "Enter it once (saves for everyone) and every category shows estimated profit. HCP job costing is unused in your data (Service cost filled on ~2% of jobs), so this model is the honest alternative until the office starts costing jobs."}
-                          </span>
-                        </div>
-                        {noDesc && noDesc.jobs > 0 && (
-                          <p className="note" style={{ marginTop: 8 }}>
-                            {noDesc.jobs} paid job{noDesc.jobs === 1 ? "" : "s"} have no description on file. If most jobs land here, re-upload the HCP jobs export once so descriptions are captured (the column is now read).
-                          </p>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
-              )}
-
-              {(cur.missedOps || []).length > 0 && (
-                <div className="panel" style={{ marginTop: 20 }}>
-                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Callback list: never reached you</h2><small>{cur.missedOps.length} lost callers, newest first</small></div>
-                  <p className="note" style={{ marginBottom: 8 }}>One row per caller. Missed in this range, never got answered on any later call, never became a job. Callers who tried again and got through are excluded.</p>
-                  {(showAllCalls ? cur.missedOps : cur.missedOps.slice(0, 15)).map((m, i) => {
-                    const isOpen = openCallRow === m.ph;
-                    const attempts = isOpen
-                      ? data.calls.filter((c) => c.ph === m.ph && (!c.tn || data.numFilter[c.tn] !== false) && !c.spamTag).sort((a, b) => (a.d < b.d ? 1 : -1))
-                      : [];
-                    return (
-                      <div key={m.ph + i} style={{ borderBottom: `1px solid ${C.line}` }}>
-                        <div className="srcrow" style={{ cursor: "pointer", borderBottom: "none" }} onClick={() => setOpenCallRow(isOpen ? null : m.ph)}>
-                          <span style={{ fontWeight: 600, minWidth: 140 }}>{fmtPhone(m.ph)}</span>
-                          <span className="note">{m.d}</span>
-                          <span className="note" style={{ marginLeft: "auto" }}>{m.src}</span>
-                          <span className="note" style={{ width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
-                        </div>
-                        {isOpen && (
-                          <div style={{ padding: "2px 6px 12px", fontSize: 13.5 }}>
-                            <a href={"tel:" + m.ph} className="btn" style={{ display: "inline-block", padding: "7px 16px", textDecoration: "none", marginBottom: 8 }}>Call {fmtPhone(m.ph)}</a>
-                            <div className="note" style={{ marginBottom: 4 }}>{attempts.length} call{attempts.length === 1 ? "" : "s"} from this number on record:</div>
-                            {attempts.map((c, j) => (
-                              <div key={j} style={{ display: "flex", gap: 10, flexWrap: "wrap", padding: "3px 0", color: C.ink }}>
-                                <span style={{ minWidth: 86 }}>{c.d}</span>
-                                <span style={{ fontWeight: 600, color: c.answered ? C.green : C.red }}>{c.answered ? "Answered" : "Missed"}</span>
-                                <span className="note">{c.src}</span>
-                                <span className="note" style={{ marginLeft: "auto" }}>{(data.numMeta[c.tn] || {}).nn || ""}</span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {cur.missedOps.length > 15 && (
-                    <p className="note" style={{ marginTop: 8, cursor: "pointer", color: C.goldSoft, fontWeight: 600 }} onClick={() => setShowAllCalls(!showAllCalls)}>
-                      {showAllCalls ? "Show fewer" : `Show all ${cur.missedOps.length} lost callers`}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {(cur.missedOps || []).length > 0 && (() => {
-                const n = cur.missedOps.length;
-                const convPct = cur.values.bookingRate || 0;
-                const ticket = cur.values.avgTicket || 0;
-                const perCaller = (convPct / 100) * ticket;
-                const est = n * perCaller;
-                const recover1in5 = est / 5;
-                const money = (x) => "$" + Math.round(x).toLocaleString();
-                return (
-                  <div className="panel" style={{ marginTop: 20 }}>
-                    <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>What those missed calls cost</h2><small>estimated from this range's own numbers</small></div>
-                    <div className="val" style={{ fontSize: 40, margin: "8px 0 2px", fontWeight: 800, color: C.ink }}>{money(est)}</div>
-                    <p className="note" style={{ marginBottom: 10 }}>estimated revenue missed because these callers never got picked up</p>
-                    <div className="srcrow"><span className="note" style={{ minWidth: 200 }}>Lost callers (list above)</span><span style={{ fontWeight: 600 }}>{n}</span></div>
-                    <div className="srcrow"><span className="note" style={{ minWidth: 200 }}>× booking rate of answered leads</span><span style={{ fontWeight: 600 }}>{convPct.toFixed(1)}%</span></div>
-                    <div className="srcrow"><span className="note" style={{ minWidth: 200 }}>× average job value (paid)</span><span style={{ fontWeight: 600 }}>{money(ticket)}</span></div>
-                    <div className="srcrow"><span className="note" style={{ minWidth: 200 }}>= per lost caller</span><span style={{ fontWeight: 800, color: C.ink }}>{money(perCaller)}</span></div>
-                    {(() => {
-                      const bySeg = {};
-                      cur.missedOps.forEach((m) => { bySeg[m.src] = (bySeg[m.src] || 0) + 1; });
-                      const segs = Object.entries(bySeg).sort((a, b) => b[1] - a[1]);
-                      const cplFor = (s) => (s === "Google Ads" ? cur.values.cplAds : s === "LSA" ? cur.values.cplLsa : null);
-                      const wastedTotal = segs.reduce((a, [s, c]) => a + (cplFor(s) ? c * cplFor(s) : 0), 0);
-                      return (
-                        <div style={{ marginTop: 14 }}>
-                          <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2 style={{ fontSize: 17 }}>By source</h2><small>missed revenue, plus the ad spend already burned on the paid ones</small></div>
-                          {segs.map(([s, c]) => {
-                            const cpl = cplFor(s);
-                            return (
-                              <div className="srcrow" key={s}>
-                                <span style={{ fontWeight: 600, minWidth: 130 }}>{s}</span>
-                                <span className="note">{c} caller{c === 1 ? "" : "s"}</span>
-                                <span style={{ fontWeight: 800, color: C.ink }}>{money(c * perCaller)} missed revenue</span>
-                                <span style={{ marginLeft: "auto", fontWeight: 600, color: cpl ? C.red : C.gray }}>
-                                  {cpl ? `${money(c * cpl)} spend wasted (at ${money(cpl)}/lead)` : s === "Google Ads" || s === "LSA" ? "no spend data for range" : "free lead"}
-                                </span>
-                              </div>
-                            );
-                          })}
-                          {wastedTotal > 0 && (
-                            <p className="note" style={{ marginTop: 8 }}>
-                              <b style={{ color: C.red }}>{money(wastedTotal)}</b> of ad spend paid for calls nobody answered. That money is gone either way; answering the phone is the only way to get it back.
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })()}
-                    <p className="note" style={{ marginTop: 10 }}>
-                      The assumption: had these callers been answered, they'd have booked at the same rate as the leads you did answer. Recover even 1 in 5 from the callback list and that's {money(recover1in5)} back.
-                    </p>
-                  </div>
-                );
-              })()}
               {openEstimates && (
                 <div className="panel" style={{ marginTop: 20 }}>
                   <div className="sectionhead" style={{ margin: "0 0 4px", alignItems: "center" }}>
@@ -1949,6 +1741,224 @@ function App() {
                   )}
                 </div>
               )}
+              {(cur.missedOps || []).length > 0 && (() => {
+                const n = cur.missedOps.length;
+                const convPct = cur.values.bookingRate || 0;
+                const ticket = cur.values.avgTicket || 0;
+                const perCaller = (convPct / 100) * ticket;
+                const est = n * perCaller;
+                const recover1in5 = est / 5;
+                const money = (x) => "$" + Math.round(x).toLocaleString();
+                return (
+                  <div className="panel" style={{ marginTop: 20 }}>
+                    <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>What those missed calls cost</h2><small>estimated from this range's own numbers</small></div>
+                    <div className="val" style={{ fontSize: 40, margin: "8px 0 2px", fontWeight: 800, color: C.ink }}>{money(est)}</div>
+                    <p className="note" style={{ marginBottom: 10 }}>estimated revenue missed because these callers never got picked up</p>
+                    <div className="srcrow"><span className="note" style={{ minWidth: 200 }}>Lost callers (list above)</span><span style={{ fontWeight: 600 }}>{n}</span></div>
+                    <div className="srcrow"><span className="note" style={{ minWidth: 200 }}>× booking rate of answered leads</span><span style={{ fontWeight: 600 }}>{convPct.toFixed(1)}%</span></div>
+                    <div className="srcrow"><span className="note" style={{ minWidth: 200 }}>× average job value (paid)</span><span style={{ fontWeight: 600 }}>{money(ticket)}</span></div>
+                    <div className="srcrow"><span className="note" style={{ minWidth: 200 }}>= per lost caller</span><span style={{ fontWeight: 800, color: C.ink }}>{money(perCaller)}</span></div>
+                    {(() => {
+                      const bySeg = {};
+                      cur.missedOps.forEach((m) => { bySeg[m.src] = (bySeg[m.src] || 0) + 1; });
+                      const segs = Object.entries(bySeg).sort((a, b) => b[1] - a[1]);
+                      const cplFor = (s) => (s === "Google Ads" ? cur.values.cplAds : s === "LSA" ? cur.values.cplLsa : null);
+                      const wastedTotal = segs.reduce((a, [s, c]) => a + (cplFor(s) ? c * cplFor(s) : 0), 0);
+                      return (
+                        <div style={{ marginTop: 14 }}>
+                          <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2 style={{ fontSize: 17 }}>By source</h2><small>missed revenue, plus the ad spend already burned on the paid ones</small></div>
+                          {segs.map(([s, c]) => {
+                            const cpl = cplFor(s);
+                            return (
+                              <div className="srcrow" key={s}>
+                                <span style={{ fontWeight: 600, minWidth: 130 }}>{s}</span>
+                                <span className="note">{c} caller{c === 1 ? "" : "s"}</span>
+                                <span style={{ fontWeight: 800, color: C.ink }}>{money(c * perCaller)} missed revenue</span>
+                                <span style={{ marginLeft: "auto", fontWeight: 600, color: cpl ? C.red : C.gray }}>
+                                  {cpl ? `${money(c * cpl)} spend wasted (at ${money(cpl)}/lead)` : s === "Google Ads" || s === "LSA" ? "no spend data for range" : "free lead"}
+                                </span>
+                              </div>
+                            );
+                          })}
+                          {wastedTotal > 0 && (
+                            <p className="note" style={{ marginTop: 8 }}>
+                              <b style={{ color: C.red }}>{money(wastedTotal)}</b> of ad spend paid for calls nobody answered. That money is gone either way; answering the phone is the only way to get it back.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
+                    <p className="note" style={{ marginTop: 10 }}>
+                      The assumption: had these callers been answered, they'd have booked at the same rate as the leads you did answer. Recover even 1 in 5 from the callback list and that's {money(recover1in5)} back.
+                    </p>
+                  </div>
+                );
+              })()}
+              {(cur.missedOps || []).length > 0 && (
+                <div className="panel" style={{ marginTop: 20 }}>
+                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Callback list: never reached you</h2><small>{cur.missedOps.length} lost callers, newest first</small></div>
+                  <p className="note" style={{ marginBottom: 8 }}>One row per caller. Missed in this range, never got answered on any later call, never became a job. Callers who tried again and got through are excluded.</p>
+                  {(showAllCalls ? cur.missedOps : cur.missedOps.slice(0, 15)).map((m, i) => {
+                    const isOpen = openCallRow === m.ph;
+                    const attempts = isOpen
+                      ? data.calls.filter((c) => c.ph === m.ph && (!c.tn || data.numFilter[c.tn] !== false) && !c.spamTag).sort((a, b) => (a.d < b.d ? 1 : -1))
+                      : [];
+                    return (
+                      <div key={m.ph + i} style={{ borderBottom: `1px solid ${C.line}` }}>
+                        <div className="srcrow" style={{ cursor: "pointer", borderBottom: "none" }} onClick={() => setOpenCallRow(isOpen ? null : m.ph)}>
+                          <span style={{ fontWeight: 600, minWidth: 140 }}>{fmtPhone(m.ph)}</span>
+                          <span className="note">{m.d}</span>
+                          <span className="note" style={{ marginLeft: "auto" }}>{m.src}</span>
+                          <span className="note" style={{ width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
+                        </div>
+                        {isOpen && (
+                          <div style={{ padding: "2px 6px 12px", fontSize: 13.5 }}>
+                            <a href={"tel:" + m.ph} className="btn" style={{ display: "inline-block", padding: "7px 16px", textDecoration: "none", marginBottom: 8 }}>Call {fmtPhone(m.ph)}</a>
+                            <div className="note" style={{ marginBottom: 4 }}>{attempts.length} call{attempts.length === 1 ? "" : "s"} from this number on record:</div>
+                            {attempts.map((c, j) => (
+                              <div key={j} style={{ display: "flex", gap: 10, flexWrap: "wrap", padding: "3px 0", color: C.ink }}>
+                                <span style={{ minWidth: 86 }}>{c.d}</span>
+                                <span style={{ fontWeight: 600, color: c.answered ? C.green : C.red }}>{c.answered ? "Answered" : "Missed"}</span>
+                                <span className="note">{c.src}</span>
+                                <span className="note" style={{ marginLeft: "auto" }}>{(data.numMeta[c.tn] || {}).nn || ""}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {cur.missedOps.length > 15 && (
+                    <p className="note" style={{ marginTop: 8, cursor: "pointer", color: C.goldSoft, fontWeight: 600 }} onClick={() => setShowAllCalls(!showAllCalls)}>
+                      {showAllCalls ? "Show fewer" : `Show all ${cur.missedOps.length} lost callers`}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="gauge">
+                <div className="pool" role="img" aria-label={`Overall health ${health.pct} percent`}>
+                  <div className="water" style={{ height: `${health.pct}%` }} />
+                  <div className="pct">{health.pct}%</div>
+                </div>
+                <div className="gaugeInfo">
+                  <b>Waterline: overall health</b>
+                  <div className="note">{cur.counts.calls.toLocaleString()} calls · {cur.values.leadsTotal || 0} new leads · {cur.counts.jobs} paid jobs in this range</div>
+                  <div className="pills">
+                    <span className="pill" style={{ background: C.green }}>{health.g} green</span>
+                    <span className="pill" style={{ background: C.yellow, color: "#fff" }}>{health.y} yellow</span>
+                    <span className="pill" style={{ background: C.red }}>{health.r} red</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="sectionhead"><h2>Recommendations</h2><small>generated from this period's data</small></div>
+              {insights.length === 0 && <p className="note">Nothing flagged for this range. Widen the date range for more signal.</p>}
+              {insights.map((ins, i) => (
+                <div key={i} className="card" style={{ borderLeftColor: ins.sev === "red" ? C.red : ins.sev === "yellow" ? C.yellow : C.green, marginBottom: 10 }}>
+                  <div className="top">
+                    <div className="mname">{ins.title}</div>
+                    <span className="chip" style={{ background: ins.sev === "red" ? C.red : ins.sev === "yellow" ? C.yellow : C.green, color: "#fff" }}>{ins.sev === "green" ? "Win" : ins.sev === "red" ? "Act now" : "Watch"}</span>
+                  </div>
+                  <div className="note" style={{ marginTop: 4 }}>{ins.detail}</div>
+                  <div style={{ marginTop: 6, color: C.goldSoft, fontWeight: 600, fontSize: 13.5 }}>→ {ins.action}</div>
+                </div>
+              ))}
+
+            </>
+          )
+        )}
+
+        {/* ================= SALES ================= */}
+        {tab === "sales" && (
+          !hasData ? (
+            <div className="panel"><p>No data on file yet. Upload the Housecall Pro jobs export on the Data tab and this page fills in.</p></div>
+          ) : (
+            <>
+              {Object.keys(cur.catPerf || {}).length > 0 && (
+                <div className="panel" style={{ marginTop: 20 }}>
+                  <div className="sectionhead" style={{ margin: "0 0 4px" }}><h2>Sales by service type</h2><small>paid jobs in this date range, categorized from HCP job descriptions</small></div>
+                  {(() => {
+                    const nd = cur.catPerf["No description"];
+                    const tot = Object.values(cur.catPerf).reduce((a, p) => a + p.revenue, 0);
+                    if (!nd || !tot || nd.revenue / tot < 0.25) return null;
+                    return (
+                      <p className="note" style={{ color: C.red, fontWeight: 600, marginBottom: 8 }}>
+                        ⚠ ${Math.round(nd.revenue).toLocaleString()} ({Math.round((nd.revenue / tot) * 100)}%) of this revenue has no job description on file HERE, even if HCP shows one. That means the last jobs upload didn't carry the column through. Re-upload the jobs export and READ THE UPLOAD MESSAGE: it will either say "Descriptions captured: X of Y" or name the problem.
+                      </p>
+                    );
+                  })()}
+                  {(() => {
+                    const entries = Object.entries(cur.catPerf).sort((a, b) => b[1].revenue - a[1].revenue);
+                    const totalRev = entries.reduce((a, [, p]) => a + p.revenue, 0);
+                    const totalJobs = entries.reduce((a, [, p]) => a + p.jobs, 0);
+                    const noDesc = cur.catPerf["No description"];
+                    const cpv = parseNum((data.settings || {}).costPerVisit) || 0;
+                    return (
+                      <>
+                        {entries.filter(([c, p]) => p.revenue > 0 || p.jobs > 0).map(([c, p]) => {
+                          const tripShare = totalJobs ? (p.jobs / totalJobs) * 100 : 0;
+                          const revShare = totalRev ? (p.revenue / totalRev) * 100 : 0;
+                          const profit = cpv > 0 ? p.revenue - p.jobs * cpv : null;
+                          const key = "cat-" + c;
+                          const isOpen = openEstRow === key;
+                          const members = (p.members || []).slice().sort((a, b) => (b.paidAmt != null ? b.paidAmt : b.amt) - (a.paidAmt != null ? a.paidAmt : a.amt));
+                          return (
+                            <div key={c} style={{ borderBottom: `1px solid ${C.line}` }}>
+                              <div className="srcrow" style={{ flexWrap: "wrap", cursor: "pointer", borderBottom: "none" }} onClick={() => setOpenEstRow(isOpen ? null : key)}>
+                                <span style={{ fontWeight: 600, minWidth: 170 }}>{c}</span>
+                                <span className="note">{p.jobs} job{p.jobs === 1 ? "" : "s"} ({tripShare.toFixed(0)}% of trips)</span>
+                                <span style={{ fontWeight: 800, color: C.ink }}>${Math.round(p.revenue).toLocaleString()}</span>
+                                <span className="note">avg ${Math.round(p.revenue / Math.max(1, p.jobs)).toLocaleString()}</span>
+                                {profit != null && (
+                                  <span style={{ fontWeight: 800, color: profit >= 0 ? C.green : C.red }}>
+                                    {profit >= 0 ? "+" : "−"}${Math.abs(Math.round(profit)).toLocaleString()} est. profit
+                                  </span>
+                                )}
+                                <span style={{ marginLeft: "auto", color: C.goldSoft, fontWeight: 600 }}>{revShare.toFixed(1)}%</span>
+                                <span className="note" style={{ width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
+                              </div>
+                              {isOpen && (
+                                <div style={{ padding: "0 6px 12px", fontSize: 13 }}>
+                                  {members.slice(0, 15).map((j, i) => (
+                                    <div key={i} className="srcrow" style={{ borderBottom: i === Math.min(members.length, 15) - 1 ? "none" : undefined }}>
+                                      <span className="note" style={{ minWidth: 78 }}>{j.d}</span>
+                                      <span className="note">#{j.jid || "—"}</span>
+                                      <span style={{ fontWeight: 700 }}>${Math.round(j.paidAmt != null ? j.paidAmt : j.amt).toLocaleString()}</span>
+                                      <span className="note" style={{ flex: "1 1 200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{j.jd || "(no description in HCP)"}</span>
+                                    </div>
+                                  ))}
+                                  {members.length > 15 && <p className="note" style={{ marginTop: 6 }}>+ {members.length - 15} more in this category</p>}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 12, padding: "10px 6px", borderTop: `1px solid ${C.line}` }}>
+                          <span className="note" style={{ fontWeight: 600 }}>Profit model — your all-in cost per job visit (tech time, truck, overhead): $</span>
+                          <input
+                            type="number" min="0" step="5"
+                            defaultValue={(data.settings || {}).costPerVisit || ""}
+                            onBlur={(ev) => { const v = parseNum(ev.target.value) || 0; if (v !== (parseNum((data.settings || {}).costPerVisit) || 0)) persist({ ...data, settings: { ...(data.settings || {}), costPerVisit: v } }); }}
+                            style={{ width: 90, background: C.navy3, color: C.ink, border: `1px solid ${C.line}`, borderRadius: 4, padding: "6px 8px", font: "inherit" }}
+                          />
+                          <span className="note" style={{ flex: "1 1 240px" }}>
+                            {cpv > 0
+                              ? `Estimated profit = collected revenue − ${"$" + cpv}/visit × jobs. A modeled number with one honest assumption; a category in red is paying you less than the trips cost.`
+                              : "Enter it once (saves for everyone) and every category shows estimated profit. HCP job costing is unused in your data (Service cost filled on ~2% of jobs), so this model is the honest alternative until the office starts costing jobs."}
+                          </span>
+                        </div>
+                        {noDesc && noDesc.jobs > 0 && (
+                          <p className="note" style={{ marginTop: 8 }}>
+                            {noDesc.jobs} paid job{noDesc.jobs === 1 ? "" : "s"} have no description on file. If most jobs land here, re-upload the HCP jobs export once so descriptions are captured (the column is now read).
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+
             </>
           )
         )}
