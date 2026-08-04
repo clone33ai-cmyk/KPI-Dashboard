@@ -20,7 +20,7 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const DATA_FILE = path.join(DATA_DIR, "mplr-kpi-data.json");
 
-const SERVER_BUILD = 62;
+const SERVER_BUILD = 63;
 
 /* ================= HCP DIRECT SYNC =================
    Pulls every job + its line items straight from the Housecall Pro API.
@@ -89,7 +89,7 @@ async function runHcpSync() {
           if (!items) items = await hcpAllLineItems(j.id);
           liByJid[jid] = { hid: j.id, items: (items || []).map((li) => ({
             n: String(li.name || li.description || "item").slice(0, 80),
-            amt: li.amount != null ? centsToDollars(li.amount) : centsToDollars(li.unit_price) * (Number(li.quantity) || 1),
+            amt: li.amount != null ? centsToDollars(li.amount) : centsToDollars(li.unit_price) * (li.quantity === null || li.quantity === undefined || li.quantity === "" ? 1 : Number(li.quantity) || 0),
           })).filter((x) => x.n) };
           syncState.liFetched++;
         } catch (e) {
@@ -109,7 +109,7 @@ async function runHcpSync() {
           const items = await hcpAllLineItems(j.id);
           liByJid[jid] = { hid: j.id, items: (items || []).map((li) => ({
             n: String(li.name || li.description || "item").slice(0, 80),
-            amt: li.amount != null ? centsToDollars(li.amount) : centsToDollars(li.unit_price) * (Number(li.quantity) || 1),
+            amt: li.amount != null ? centsToDollars(li.amount) : centsToDollars(li.unit_price) * (li.quantity === null || li.quantity === undefined || li.quantity === "" ? 1 : Number(li.quantity) || 0),
           })).filter((x) => x.n) };
           syncState.liFetched++;
         } catch (e) {
