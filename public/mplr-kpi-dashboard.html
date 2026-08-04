@@ -276,9 +276,10 @@ function jobCategory(desc, amt) {
   if (/equipment (diagnostic|inspection)|diagnostic service/.test(s)) return "Equipment Inspection";
   if (/pump|filter|heater|motor|salt cell|actuator|booster|automation|equipment (repair|install|replace)/.test(s)) return "Equipment";
   if (/bond beam/.test(s)) return "Pool Bond Beam Repair";
-  if (/pressure test|video vac|sewer camera|dive pool|water she(e|a)r/.test(s)) return "Leak Detection";
+  if (/pressure test|video vac|sewer camera|dive pool|water she(e|a)r/.test(s) && !/repair|rebuild|replace|patch/.test(s)) return amt && amt > 1200 ? "Leak Repair" : "Leak Detection";
+  if (/\bpatch(es)?\b/.test(s)) return "Leak Repair";
   if (/staple|engineering report/.test(s)) return "Structural";
-  if (/waterfall|spillway|water feature/.test(s)) return "Water Feature & Spillway";
+  if (/waterfall|spillway|water feature|water she(e|a)r/.test(s)) return "Water Feature & Spillway";
   if (/main drain|vgb|drain cover/.test(s)) return "Main Drain & Compliance";
   if (/french drain|channel drain|drainage/.test(s)) return "Drainage";
   if (/acid wash|power ?wash/.test(s)) return "Drain & Clean";
@@ -314,9 +315,10 @@ function liCategory(name, amt) {
   const s = String(name || "").toLowerCase();
   if (!s) return "Other";
   if (/bond beam/.test(s)) return "Pool Bond Beam Repair";
-  if (/pressure test|video vac|sewer camera|dive pool|water she(e|a)r|leak (test|check)/.test(s)) return "Leak Detection";
+  if (/pressure test|video vac|sewer camera|dive pool|water she(e|a)r|leak (test|check)/.test(s) && !/repair|rebuild|replace|patch/.test(s)) return amt && amt > 1200 ? "Leak Repair" : "Leak Detection";
+  if (/\bpatch(es)?\b/.test(s)) return "Leak Repair";
   if (/staple|engineering report/.test(s)) return "Structural";
-  if (/waterfall|spillway|water feature|negative edge/.test(s)) return "Water Feature & Spillway";
+  if (/waterfall|spillway|water feature|negative edge|water she(e|a)r/.test(s)) return "Water Feature & Spillway";
   if (/main drain|vgb|drain cover/.test(s)) return "Main Drain & Compliance";
   if (/french drain|channel drain|drainage/.test(s)) return "Drainage";
   if (/acid wash|power ?wash|drain (the |and |\/ ?|\+ ?)?(pool|acid|clean|power)/.test(s)) return "Drain & Clean";
@@ -1671,7 +1673,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 72</div>
+            <div className="sub">KPI Dashboard · build 73</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
