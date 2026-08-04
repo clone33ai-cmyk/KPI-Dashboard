@@ -20,7 +20,7 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const DATA_FILE = path.join(DATA_DIR, "mplr-kpi-data.json");
 
-const SERVER_BUILD = 61;
+const SERVER_BUILD = 62;
 
 /* ================= HCP DIRECT SYNC =================
    Pulls every job + its line items straight from the Housecall Pro API.
@@ -29,15 +29,32 @@ const HCP_KEY = process.env.HCP_API_KEY || "";
 const HCP_BASE = "https://api.housecallpro.com";
 const syncState = { running: false, startedAt: null, finishedAt: null, phase: "", pages: 0, jobsSeen: 0, liFetched: 0, liFailures: 0, merged: 0, created: 0, descFilled: 0, error: null, authHint: null };
 
-async function hcpFetch(path, tries = 3) {
+async function hcpFetch(path, tries = 5) {
   for (let a = 1; a <= tries; a++) {
     const r = await fetch(HCP_BASE + path, { headers: { Authorization: "Bearer " + HCP_KEY, Accept: "application/json" } });
-    if (r.status === 429 || r.status >= 500) { await new Promise((res) => setTimeout(res, 1200 * a)); continue; }
+    if (r.status === 429 || r.status >= 500) {
+      const ra = Number(r.headers && r.headers.get && r.headers.get("retry-after")) || 0;
+      const wait = ra > 0 ? ra * 1000 : Math.min(15000, 800 * Math.pow(2, a)) + Math.random() * 500;
+      await new Promise((res) => setTimeout(res, wait));
+      continue;
+    }
     if (r.status === 401 || r.status === 403) { const e = new Error("HCP rejected the API key (HTTP " + r.status + ")"); e.auth = true; throw e; }
     if (!r.ok) throw new Error("HCP " + path.split("?")[0] + " → HTTP " + r.status);
     return r.json();
   }
   throw new Error("HCP kept rate-limiting " + path.split("?")[0]);
+}
+
+/* line items can span pages — fetch them all */
+async function hcpAllLineItems(jobId) {
+  const out = [];
+  for (let page = 1; page <= 10; page++) {
+    const body = await hcpFetch(`/jobs/${jobId}/line_items?page=${page}&page_size=200`);
+    const list = body.data || body.line_items || (Array.isArray(body) ? body : []);
+    out.push(...list);
+    if (!list.length || list.length < 200) break;
+  }
+  return out;
 }
 
 function centsToDollars(v) { const n = Number(v); return Number.isFinite(n) ? Math.round(n) / 100 : 0; }
@@ -59,6 +76,7 @@ async function runHcpSync() {
     syncState.phase = "fetching line items";
     const liByJid = {};
     const descByJid = {};
+    const failedJobs = [];
     let idx = 0;
     const workers = Array.from({ length: 5 }, async () => {
       while (idx < apiJobs.length) {
@@ -68,10 +86,7 @@ async function runHcpSync() {
         if (j.description) descByJid[jid] = String(j.description).slice(0, 90);
         try {
           let items = Array.isArray(j.line_items) ? j.line_items : null;
-          if (!items) {
-            const body = await hcpFetch(`/jobs/${j.id}/line_items`);
-            items = body.data || body.line_items || (Array.isArray(body) ? body : []);
-          }
+          if (!items) items = await hcpAllLineItems(j.id);
           liByJid[jid] = { hid: j.id, items: (items || []).map((li) => ({
             n: String(li.name || li.description || "item").slice(0, 80),
             amt: li.amount != null ? centsToDollars(li.amount) : centsToDollars(li.unit_price) * (Number(li.quantity) || 1),
@@ -79,11 +94,33 @@ async function runHcpSync() {
           syncState.liFetched++;
         } catch (e) {
           if (e.auth) throw e;
-          syncState.liFailures++;
+          failedJobs.push(j);
         }
       }
     });
     await Promise.all(workers);
+    /* dedicated slow retry passes for whatever the rate limiter ate */
+    for (let pass = 1; pass <= 2 && failedJobs.length; pass++) {
+      syncState.phase = `retrying ${failedJobs.length} failed line-item fetches (pass ${pass})`;
+      const again = failedJobs.splice(0);
+      for (const j of again) {
+        const jid = String(j.invoice_number || j.id || "").trim();
+        try {
+          const items = await hcpAllLineItems(j.id);
+          liByJid[jid] = { hid: j.id, items: (items || []).map((li) => ({
+            n: String(li.name || li.description || "item").slice(0, 80),
+            amt: li.amount != null ? centsToDollars(li.amount) : centsToDollars(li.unit_price) * (Number(li.quantity) || 1),
+          })).filter((x) => x.n) };
+          syncState.liFetched++;
+        } catch (e) {
+          if (e.auth) throw e;
+          failedJobs.push(j);
+        }
+        await new Promise((r) => setTimeout(r, 350)); /* gentle pace */
+      }
+    }
+    syncState.liFailures = failedJobs.length;
+    syncState.failedJobIds = failedJobs.slice(0, 50).map((j) => String(j.invoice_number || j.id));
     syncState.phase = "merging into the dashboard data";
     const d = loadData();
     const jobs = d.jobs || [];
