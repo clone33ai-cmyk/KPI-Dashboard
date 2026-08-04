@@ -805,20 +805,36 @@ function computeStats(data, range, numFilter, manual) {
     catTot++;
     if (j.li && j.li.length) {
       const liSum = j.li.reduce((a, x) => a + (x.amt || 0), 0);
-      if (liSum > 0 && jobRev > 0) {
+      /* HARD RULE: report/summary/doc lines never carry dollars. Job money
+         allocates across real WORK lines only; a doc line holding dollars
+         (bad quantity data) hands them to the named work. */
+      const docRe = /leak diagnosis|leak detection report|leak detection summary|\bld notes\b/;
+      const isDoc = (nm) => docRe.test(String(nm).toLowerCase());
+      const work = j.li.filter((x) => !isDoc(x.n));
+      const workSum = work.reduce((a, x) => a + Math.max(0, x.amt || 0), 0);
+      if (workSum > 0 && jobRev > 0) {
         catLi++;
-        const scale = jobRev / liSum; /* allocate collected dollars pro-rata across the lines */
-        /* the office doesn't charge for reports/summaries — dollars billed on
-           those lines belong to the actual work. If $0 sibling lines name the
-           work unambiguously, the money follows the work. */
-        const genericDoc = /leak detection report|leak diagnosis|leak detection summary|ld notes/;
-        const zeroCats = [...new Set(j.li.filter((z) => !(z.amt > 0)).map((z) => liCategory(z.n, 0)).filter((cc) => !["Other", "Leak Detection", "Go-Backs", "Documentation", "Equipment Inspection"].includes(cc)))];
-        j.li.forEach((x) => {
-          const sc = Math.round((x.amt || 0) * scale);
-          let cc = liCategory(x.n, sc);
-          if (sc > 0 && genericDoc.test(String(x.n).toLowerCase()) && zeroCats.length === 1) cc = zeroCats[0];
-          bumpCat(cc, (x.amt || 0) * scale, j.jid, j.svc, { ...j, jd: x.n, amt: sc, paidAmt: sc });
+        const scale = jobRev / workSum;
+        work.forEach((x) => {
+          const raw = Math.max(0, x.amt || 0);
+          if (raw <= 0) return; /* $0 ancillary lines: category comes from the paid lines */
+          const sc = Math.round(raw * scale);
+          bumpCat(liCategory(x.n, sc), raw * scale, j.jid, j.svc, { ...j, jd: x.n, amt: sc, paidAmt: sc });
         });
+        return;
+      }
+      if (jobRev > 0 && work.length) {
+        /* all dollars sat on doc lines — give them to the named work when unambiguous */
+        const workCats = [...new Set(work.map((x) => liCategory(x.n, jobRev)))];
+        if (workCats.length === 1) {
+          catLi++;
+          bumpCat(workCats[0], jobRev, j.jid, j.svc, { ...j, jd: work[0].n, amt: Math.round(jobRev), paidAmt: Math.round(jobRev) });
+          return;
+        }
+      }
+      if (jobRev > 0 && j.li.length && !work.length) {
+        /* invoice holds ONLY report/doc lines — nothing names the work */
+        bumpCat(jobCategory(j.jd, j.amt), jobRev, j.jid, j.svc, { ...j, jd: (j.jd || "(no description)") + " — invoice has only report lines, no work line", amt: Math.round(jobRev), paidAmt: Math.round(jobRev) });
         return;
       }
     }
@@ -1635,7 +1651,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 70</div>
+            <div className="sub">KPI Dashboard · build 71</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
