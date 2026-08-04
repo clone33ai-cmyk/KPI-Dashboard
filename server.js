@@ -20,14 +20,14 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const DATA_FILE = path.join(DATA_DIR, "mplr-kpi-data.json");
 
-const SERVER_BUILD = 58;
+const SERVER_BUILD = 59;
 
 /* ================= HCP DIRECT SYNC =================
    Pulls every job + its line items straight from the Housecall Pro API.
    Needs env var HCP_API_KEY (Railway → Variables). */
 const HCP_KEY = process.env.HCP_API_KEY || "";
 const HCP_BASE = "https://api.housecallpro.com";
-const syncState = { running: false, startedAt: null, finishedAt: null, phase: "", pages: 0, jobsSeen: 0, liFetched: 0, liFailures: 0, merged: 0, descFilled: 0, error: null, authHint: null };
+const syncState = { running: false, startedAt: null, finishedAt: null, phase: "", pages: 0, jobsSeen: 0, liFetched: 0, liFailures: 0, merged: 0, created: 0, descFilled: 0, error: null, authHint: null };
 
 async function hcpFetch(path, tries = 3) {
   for (let a = 1; a <= tries; a++) {
@@ -44,7 +44,7 @@ function centsToDollars(v) { const n = Number(v); return Number.isFinite(n) ? Ma
 
 async function runHcpSync() {
   syncState.running = true;
-  Object.assign(syncState, { startedAt: new Date().toISOString(), finishedAt: null, phase: "listing jobs", pages: 0, jobsSeen: 0, liFetched: 0, liFailures: 0, merged: 0, descFilled: 0, error: null, authHint: null });
+  Object.assign(syncState, { startedAt: new Date().toISOString(), finishedAt: null, phase: "listing jobs", pages: 0, jobsSeen: 0, liFetched: 0, liFailures: 0, merged: 0, created: 0, descFilled: 0, error: null, authHint: null });
   try {
     const apiJobs = [];
     for (let page = 1; page < 500; page++) {
@@ -96,6 +96,31 @@ async function runHcpSync() {
       if (entry.items.length) { tgt.li = entry.items; tgt.hid = entry.hid; syncState.merged++; }
       if (!tgt.jd && descByJid[jid]) { tgt.jd = descByJid[jid]; syncState.descFilled++; }
     }
+    /* UPSERT: any API job the store doesn't have gets created outright, so
+       the sync can rebuild from zero — a cleared sheet is no longer fatal.
+       Paid date approximates to the completion date once the balance is 0. */
+    for (const aj of apiJobs) {
+      const jid = String(aj.invoice_number || aj.id || "").trim();
+      if (!jid || byJid.has(jid) || byBase.has(jid.split("-")[0])) continue;
+      const total = centsToDollars(aj.total_amount);
+      const out = centsToDollars(aj.outstanding_balance);
+      const created = String(aj.created_at || "").slice(0, 10) || null;
+      const doneAt = (aj.work_timestamps && String(aj.work_timestamps.completed_at || "").slice(0, 10)) || null;
+      const cust = aj.customer || {};
+      const nj = {
+        jid, d: created || doneAt, amt: total,
+        paidAmt: Math.max(0, total - out),
+        pd: total > 0 && out <= 0 ? (doneAt || created) : null,
+        done: /complete/i.test(String(aj.work_status || "")),
+        jd: descByJid[jid] || "",
+        ph: String(cust.mobile_number || cust.home_number || cust.work_number || "").replace(/\D/g, "").slice(-10),
+        hid: aj.id,
+      };
+      const entry = liByJid[jid];
+      if (entry && entry.items.length) nj.li = entry.items;
+      if (nj.d) { jobs.push(nj); byJid.set(jid, nj); syncState.created++; }
+    }
+    d.jobs = jobs.sort((a, b) => (a.d < b.d ? -1 : 1));
     d.meta = d.meta || {};
     d.meta.hcpSync = { at: new Date().toISOString(), jobs: apiJobs.length, withLineItems: syncState.merged };
     saveData(d);
