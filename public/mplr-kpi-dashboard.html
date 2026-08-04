@@ -1612,7 +1612,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 65</div>
+            <div className="sub">KPI Dashboard · build 66</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
@@ -1769,7 +1769,8 @@ function App() {
                                     <span className="note">{estPhone(e) ? fmtPhone(estPhone(e)) : "no phone yet"}</span>
                                     <span className="note">{e.amt ? `$${Math.round(e.amt).toLocaleString()}` : ""}</span>
                                     {(() => { const fp = (data.followups || {})[e.eid]; return fp && (fp.n || fp.t) ? <span className="pill" style={{ background: C.gold, color: C.onGold }}>{[fp.n ? `Called ${fp.n}×` : null, fp.t ? `Texted ${fp.t}×` : null].filter(Boolean).join(" · ")}</span> : null; })()}
-                                    <span style={{ marginLeft: "auto", fontWeight: 600, color: e.age > 30 ? C.red : e.age > 7 ? C.yellow : C.green }}>{e.age}d old</span>
+                                    <span className="note" style={{ marginLeft: "auto", minWidth: 84 }}>{e.d}</span>
+                                    <span style={{ fontWeight: 600, color: e.age > 30 ? C.red : e.age > 7 ? C.yellow : C.green }}>{e.age}d old</span>
                                     <span className="note" style={{ width: 16, textAlign: "right" }}>{isOpen ? "▾" : "▸"}</span>
                                   </div>
                                   {isOpen && (
