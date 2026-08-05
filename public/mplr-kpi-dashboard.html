@@ -789,7 +789,9 @@ function computeStats(data, range, numFilter, manual) {
   });
   const missedOps = Object.values(missedByPhone)
     .filter((m) => {
-      const reachedLater = (callIdxAll[m.ph] || []).some((c) => c.d > m.d && c.answered);
+      /* same-day counts: dates carry no clock time, so an answered call on
+         the SAME day as the miss means they reached you — not a lost caller */
+      const reachedLater = (callIdxAll[m.ph] || []).some((c) => c.d >= m.d && c.answered);
       const becameCustomer = (phoneIdx[m.ph] || []).some((jd) => jd >= m.d);
       return !reachedLater && !becameCustomer;
     })
@@ -1673,7 +1675,7 @@ function App() {
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 73</div>
+            <div className="sub">KPI Dashboard · build 74</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
