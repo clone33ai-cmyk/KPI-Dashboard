@@ -71,13 +71,15 @@ const SERVER_MODE = typeof window !== "undefined" && window.location.protocol.st
 const store = {
   async get(k) {
     if (SERVER_MODE) {
-      try {
-        const r = await fetch("/api/data");
-        if (r.ok) {
-          const j = await r.json();
-          if (j && (j.calls || j.jobs)) return { key: k, value: JSON.stringify(j) };
-        }
-      } catch (e) { /* fall through */ }
+      const r = await fetch("/api/data").catch(() => null);
+      if (r && r.ok) {
+        const j = await r.json();
+        if (j && (j.calls || j.jobs)) return { key: k, value: JSON.stringify(j) };
+        return null;
+      }
+      const err = new Error(r ? `the server refused the data request (HTTP ${r.status}${r.status === 401 ? " — sign-in required; reload the page and enter the dashboard username and password" : ""})` : "the server could not be reached");
+      err.loadFail = true;
+      throw err;
     }
     if (typeof window !== "undefined" && window.storage && window.storage.get) return window.storage.get(k);
     const v = localStorage.getItem(k);
@@ -963,6 +965,7 @@ function App() {
   const [saveState, setSaveState] = useState("");
   const [pendingList, setPendingList] = useState([]);
   const [uploadMsg, setUploadMsg] = useState(null);
+  const [loadErr, setLoadErr] = useState(null);
   const [trendMetric, setTrendMetric] = useState("answerRate");
   const [showAccuracy, setShowAccuracy] = useState(false);
   const [showLsaManual, setShowLsaManual] = useState(false);
@@ -990,7 +993,7 @@ function App() {
           setData({ calls: [], jobs: [], ads: [], lsa: [], lsabill: [], estimates: [], kathy: [], followups: {}, settings: {}, manual: {}, numFilter: {}, numMeta: {}, mapMemory: {}, ...parsed });
           fromStore = true;
         }
-      } catch (e) { /* nothing stored */ }
+      } catch (e) { if (e && e.loadFail) setLoadErr(e.message); }
       /* embedded default dataset: used whenever nothing is saved in this
          browser (e.g. Google Sites). Saved data always wins over it. */
       if (!fromStore && typeof window !== "undefined" && window.MPLR_DEFAULT_DATA) {
@@ -1672,10 +1675,15 @@ function App() {
       `}</style>
 
       <div className="wrap">
+        {loadErr && (
+          <div style={{ background: "#7a1f1f", color: "#fff", padding: "10px 16px", borderRadius: 8, margin: "10px 0", fontWeight: 600 }}>
+            ⚠ Data did not load: {loadErr}. The page below is EMPTY because the data could not be fetched — not because no data exists.
+          </div>
+        )}
         <header className="masthead">
           <div>
             <div className="brand">Mr. Pool <span>Leak Repair</span></div>
-            <div className="sub">KPI Dashboard · build 74</div>
+            <div className="sub">KPI Dashboard · build 75</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span className="sub">
